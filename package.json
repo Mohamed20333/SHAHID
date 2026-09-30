@@ -1,0 +1,22 @@
+{
+  "name": "shahid-attendance-intelligence",
+  "version": "1.0.0",
+  "private": true,
+  "description": "CN3030 term project: AI-assisted attendance verification and academic-integrity intelligence.",
+  "type": "module",
+  "engines": {
+    "node": ">=22.0.0"
+  },
+  "scripts": {
+    "test": "tsx --test backend/shahid-server.test.ts",
+    "demo": "tsx backend/shahid-demo.ts",
+    "start": "tsx backend/shahid-server.ts",
+    "typecheck": "tsc --noEmit",
+    "check": "npm run typecheck && npm test"
+  },
+  "devDependencies": {
+    "tsx": "^4.19.2",
+    "typescript": "^5.7.2",
+    "@types/node": "^22.10.2"
+  }
+}

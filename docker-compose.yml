@@ -1,0 +1,24 @@
+services:
+  postgres:
+    image: postgres:16
+    container_name: shahid-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: shahid
+      POSTGRES_USER: shahid
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-change_me_locally}
+    ports:
+      - "5432:5432"
+    volumes:
+      # Official postgres image auto-runs any .sql file placed here,
+      # in filename order, on first container initialization only.
+      - ./database/schema.sql:/docker-entrypoint-initdb.d/01-schema.sql:ro
+      - shahid_pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U shahid -d shahid"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+volumes:
+  shahid_pgdata:

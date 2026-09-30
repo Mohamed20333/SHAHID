@@ -194,7 +194,7 @@ ${DIM}  hunting for impersonation, not students —
 `);
 }
 
-if (process.argv[1] && fileURLToPath(import.meta.url) === fileURLToPath(process.argv[1])) {
+if (process.argv[1] && fileURLToPath(import.meta.url) === resolve(process.argv[1])) {
   const port = Number(process.env.PORT ?? 3000);
   createShahidServer(process.env.SHAHID_DB_PATH ?? ":memory:").listen(port, () => printBanner(port));
 }

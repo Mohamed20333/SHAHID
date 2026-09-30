@@ -1,5 +1,6 @@
 import { createServer, IncomingMessage, ServerResponse } from "node:http";
 import { fileURLToPath } from "node:url";
+import { resolve } from "node:path";
 import { getDb } from "./shahid-db";
 import { hashPassword, verifyPassword, signJwt, verifyJwt } from "./shahid-auth";
 import { hasQuorum, decideEscalation, type SessionRecord, type HistoricalPairStats } from "./shahid-escalation-logic";

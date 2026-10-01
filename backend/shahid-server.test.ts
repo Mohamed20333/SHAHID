@@ -180,6 +180,33 @@ test("witness observer identity must belong to the authenticated user", async ()
   assert.equal(legitimate.status, 201);
 });
 
+test("multiple devices owned by one student do not create an independent quorum", async () => {
+  const prof = await login("prof-witness@test.com");
+  await registerStudent("single-owner@test.com");
+  const student = await login("single-owner@test.com");
+  const target = await enroll(student.accessToken, "single-target");
+  const ownDevices = [];
+  for (let i = 1; i <= 4; i++) ownDevices.push(await enroll(student.accessToken, `single-owner-device-${i}`));
+  const sessionId = await createSession(prof.accessToken);
+
+  for (const observerDevice of ownDevices) {
+    const res = await fetch(`${BASE}/sessions/${sessionId}/witnesses`, {
+      method: "POST",
+      headers: auth(student.accessToken, observerDevice),
+      body: JSON.stringify({ observedDeviceId: target, rssi: -60 }),
+    });
+    assert.equal(res.status, 403);
+  }
+
+  const attendance = await fetch(`${BASE}/sessions/${sessionId}/attendance/${target}`, {
+    headers: auth(student.accessToken),
+  });
+  assert.equal(attendance.status, 200);
+  const body = (await attendance.json()) as { witnessCount: number; outcome: string };
+  assert.equal(body.witnessCount, 0);
+  assert.equal(body.outcome, "absent");
+});
+
 test("attendance is visible only to the session owner or device owner", async () => {
   const prof1 = await login("prof-witness@test.com");
   const prof2Id = createProfessor("prof-other@test.com");

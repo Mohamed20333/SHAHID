@@ -35,8 +35,7 @@ class EvidenceService:Service(){
     b.startAdvertising(e)
     b.startScan{observedEphemeral,rssi->
       val now=System.currentTimeMillis();val previous=lastObserved.put(observedEphemeral,now)
-      if(previous!=null && now-previous<15000)return@startScan
-      executor.execute{
+      if(previous==null || now-previous>=15000) executor.execute{
         try{
           val challenge=api.witnessChallenge(t,s,d)
           val nonce=challenge.getString("nonce")

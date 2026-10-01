@@ -28,7 +28,7 @@ class EvidenceService:Service(){
   token=intent?.getStringExtra("token");sessionId=intent?.getStringExtra("sessionId");deviceId=intent?.getStringExtra("deviceId");ephemeralId=intent?.getStringExtra("ephemeralId")
   val t=token;val s=sessionId;val d=deviceId;val e=ephemeralId
   if(t==null||s==null||d==null||e==null){stopSelf();return START_NOT_STICKY}
-  val identity=CryptoIdentity();val signer=EvidenceSigner(identity);val api=ApiClient(intent.getStringExtra("baseUrl") ?: "http://10.0.2.2:8080")
+  val identity=CryptoIdentity();val signer=EvidenceSigner(identity);val baseUrl=intent?.getStringExtra("baseUrl") ?: "http://10.0.2.2:8080";val api=ApiClient(baseUrl)
   ble=BleEvidence(this).also{b->
     b.startAdvertising(e)
     b.startScan{observedEphemeral,rssi->

@@ -70,7 +70,7 @@ const allowedOrigins = new Set(
 const rateBuckets = new Map<string, { count: number; windowStart: number }>();
 const RATE_LIMIT_WINDOW_MS = 60_000;
 const RATE_LIMIT_MAX = 120;
-const LOGIN_RATE_LIMIT_MAX = 10;
+const LOGIN_RATE_LIMIT_MAX = process.env.NODE_ENV === "test" ? 100 : 10;
 const REGISTER_RATE_LIMIT_MAX = process.env.NODE_ENV === "test" ? 100 : 5;
 
 interface AuthedUser {

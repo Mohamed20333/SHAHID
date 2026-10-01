@@ -178,16 +178,16 @@ export function getUserDevices(database: DatabaseSync, userId: string): Array<{ 
 }
 
 export function ensureDevice(database: DatabaseSync, userId: string, deviceEnrollmentKeyHash: string): string {
-  const existing = database.prepare("SELECT id, user_id FROM devices WHERE device_enrollment_key_hash = ?").get(hardwareAttestationId) as { id: string; user_id: string } | undefined;
+  const existing = database.prepare("SELECT id, user_id FROM devices WHERE device_enrollment_key_hash = ?").get(deviceEnrollmentKeyHash) as { id: string; user_id: string } | undefined;
   if (existing) {
-    if (existing.user_id !== userId) throw new Error("device_attestation_already_enrolled");
+    if (existing.user_id !== userId) throw new Error("device_enrollment_already_owned");
     return existing.id;
   }
   const id = randomUUID();
   database.prepare(`
     INSERT INTO devices (id, user_id, device_enrollment_key_hash, enrolled_at)
     VALUES (?, ?, ?, ?)
-  `).run(id, userId, hardwareAttestationId, new Date().toISOString());
+  `).run(id, userId, deviceEnrollmentKeyHash, new Date().toISOString());
   return id;
 }
 

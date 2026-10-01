@@ -109,11 +109,50 @@ function migrate(database: DatabaseSync): void {
     CREATE INDEX IF NOT EXISTS idx_refresh_user ON refresh_tokens(user_id);
     CREATE INDEX IF NOT EXISTS idx_refresh_family ON refresh_tokens(family_id);
     CREATE INDEX IF NOT EXISTS idx_witness_session_observed ON witness_observations(session_id, observed_device_id);
+
+    CREATE TABLE IF NOT EXISTS audit_log (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      actor_id TEXT REFERENCES users(id) ON DELETE SET NULL,
+      action TEXT NOT NULL,
+      target_type TEXT NOT NULL,
+      target_id TEXT,
+      reason_code TEXT,
+      metadata_json TEXT NOT NULL DEFAULT '{}',
+      occurred_at TEXT NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS idx_audit_actor ON audit_log(actor_id, occurred_at);
+    CREATE INDEX IF NOT EXISTS idx_audit_target ON audit_log(target_type, target_id);
   `);
 }
 
 export interface UserRow {
   id: string; role: string; full_name: string; email: string; password_hash: string; created_at: string;
+}
+
+export function writeAuditLog(
+  database: DatabaseSync,
+  params: {
+    actorId?: string | null;
+    action: string;
+    targetType: string;
+    targetId?: string | null;
+    reasonCode?: string | null;
+    metadata?: Record<string, unknown>;
+  },
+): void {
+  database.prepare(`
+    INSERT INTO audit_log
+      (actor_id, action, target_type, target_id, reason_code, metadata_json, occurred_at)
+    VALUES (?, ?, ?, ?, ?, ?, ?)
+  `).run(
+    params.actorId ?? null,
+    params.action,
+    params.targetType,
+    params.targetId ?? null,
+    params.reasonCode ?? null,
+    JSON.stringify(params.metadata ?? {}),
+    new Date().toISOString(),
+  );
 }
 
 export function insertUser(database: DatabaseSync, params: { role: string; fullName: string; email: string; passwordHash: string }): UserRow {

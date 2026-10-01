@@ -8,6 +8,31 @@ SHAHID is an academic prototype designed around one practical question:
 
 The design keeps attendance as an administrative signal and adds an independent smart layer based on engagement and behavioural evidence. A risk flag is a signal for instructor review — **not an automatic penalty or verdict**.
 
+## Security posture
+
+SHAHID treats the client as untrusted. Security-sensitive decisions are based on server-owned evidence rather than client-supplied risk values.
+
+### Hardened controls
+
+- Public registration creates students only; privileged roles cannot be self-assigned.
+- Passwords use salted, memory-hard scrypt with an explicit work factor.
+- Access JWTs are short-lived and validate algorithm, token type, issuer, audience, expiry, issue time, and token ID.
+- Refresh credentials are opaque random tokens stored only as SHA-256 hashes.
+- Refresh tokens rotate on use; replay of a revoked token revokes the token family.
+- Witness submissions cannot nominate an arbitrary observer device; the observer must belong to the authenticated account.
+- Risk calculation loads evidence from server-side persistence and ignores forged client-side evidence.
+- JSON request bodies are capped at 64 KiB.
+- Authentication has stricter rate limiting.
+- CORS uses an explicit origin allowlist rather than a wildcard.
+- Sensitive responses use no-store caching and generic client-facing errors.
+- CI performs type checking, adversarial regression tests, dependency auditing, and CodeQL analysis.
+
+### Security limitations that are intentionally not hidden
+
+The current device enrollment value is hashed, but it is not hardware-backed attestation. Production mobile integration should use hardware-backed keys and challenge-response proof. RSSI is also an environmental radio measurement, not cryptographic proof of physical proximity.
+
+See [docs/security/threat-model.md](docs/security/threat-model.md) for the threat model, trust boundaries, residual risks, and security test strategy.
+
 ## Project contents
 
 ```text

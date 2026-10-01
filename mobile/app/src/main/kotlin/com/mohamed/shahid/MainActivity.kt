@@ -87,7 +87,7 @@ class MainActivity:AppCompatActivity(){
     val sig=signer.signCheckIn(challenge.getString("challengeId"),challenge.getString("nonce"),challenge.getString("purpose"),sessionId,deviceId,ts)
     api.checkIn(token,sessionId,deviceId,challenge.getString("challengeId"),sig,ts)
     val beacon=api.beacon(token,sessionId,deviceId)
-    ensureBluetooth()
+    if(!ensureBluetooth()){runOnUiThread{status.text="Enable Bluetooth and grant Nearby Devices permission, then press the session button again."};return@runAsync}
     val service=Intent(this,EvidenceService::class.java).apply{
       putExtra("token",token);putExtra("sessionId",sessionId);putExtra("deviceId",deviceId)
       putExtra("ephemeralId",beacon.getString("ephemeralId"));putExtra("baseUrl",prefs.getString("apiUrl","http://10.0.2.2:8080"))
@@ -98,11 +98,12 @@ class MainActivity:AppCompatActivity(){
   }
  }
 
- private fun ensureBluetooth(){
-  if(!hasBlePermissions())requestBlePermissions()
+ private fun ensureBluetooth():Boolean{
+  if(!hasBlePermissions()){requestBlePermissions();return false}
   val adapter=getSystemService(BLUETOOTH_SERVICE) as BluetoothAdapter
-  if(!adapter.isEnabled)startActivityForResult(Intent(BluetoothAdapter.ACTION_REQUEST_ENABLE),77)
-  if(Build.VERSION.SDK_INT>=33&&checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS)!=PackageManager.PERMISSION_GRANTED)requestPermissions(arrayOf(Manifest.permission.POST_NOTIFICATIONS),78)
+  if(!adapter.isEnabled){startActivityForResult(Intent(BluetoothAdapter.ACTION_REQUEST_ENABLE),77);return false}
+  if(Build.VERSION.SDK_INT>=33&&checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS)!=PackageManager.PERMISSION_GRANTED){requestPermissions(arrayOf(Manifest.permission.POST_NOTIFICATIONS),78);return false}
+  return true
  }
 
  private fun hasBlePermissions():Boolean{

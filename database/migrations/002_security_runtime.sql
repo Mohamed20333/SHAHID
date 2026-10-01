@@ -37,4 +37,41 @@ CREATE INDEX IF NOT EXISTS idx_device_challenges_session ON device_challenges(se
 
 ALTER TABLE audit_log ADD COLUMN IF NOT EXISTS metadata JSONB NOT NULL DEFAULT '{}';
 
+
+CREATE TABLE IF NOT EXISTS witness_challenges (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    session_id UUID NOT NULL REFERENCES class_sessions(id) ON DELETE CASCADE,
+    observer_device_id UUID NOT NULL REFERENCES devices(id) ON DELETE CASCADE,
+    nonce TEXT NOT NULL UNIQUE,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    expires_at TIMESTAMPTZ NOT NULL,
+    consumed_at TIMESTAMPTZ
+);
+CREATE INDEX IF NOT EXISTS idx_witness_challenges_session_device
+  ON witness_challenges(session_id, observer_device_id, expires_at);
+
+CREATE TABLE IF NOT EXISTS session_beacons (
+    session_id UUID NOT NULL REFERENCES class_sessions(id) ON DELETE CASCADE,
+    device_id UUID NOT NULL REFERENCES devices(id) ON DELETE CASCADE,
+    ephemeral_id_hash TEXT NOT NULL,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    expires_at TIMESTAMPTZ NOT NULL,
+    PRIMARY KEY (session_id, device_id),
+    UNIQUE (session_id, ephemeral_id_hash)
+);
+CREATE INDEX IF NOT EXISTS idx_session_beacons_hash
+  ON session_beacons(session_id, ephemeral_id_hash);
+
+CREATE TABLE IF NOT EXISTS evidence_heartbeats (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    session_id UUID NOT NULL REFERENCES class_sessions(id) ON DELETE CASCADE,
+    device_id UUID NOT NULL REFERENCES devices(id) ON DELETE CASCADE,
+    observed_at TIMESTAMPTZ NOT NULL,
+    sequence BIGINT NOT NULL,
+    signature TEXT NOT NULL,
+    UNIQUE(session_id, device_id, sequence)
+);
+CREATE INDEX IF NOT EXISTS idx_evidence_heartbeats_session_device
+  ON evidence_heartbeats(session_id, device_id, observed_at);
+
 COMMIT;

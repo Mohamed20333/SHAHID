@@ -1,4 +1,6 @@
 import Foundation
+import SwiftUI
+import CoreBluetooth
 import CryptoKit
 import Security
 

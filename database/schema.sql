@@ -120,7 +120,7 @@ CREATE TABLE pair_stats (
     CHECK (device_a_id < device_b_id)
 );
 
-CREATE TABLE engagement_scores (
+CREATE TABLE session_engagement_scores (
     student_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
     session_id UUID NOT NULL REFERENCES class_sessions(id) ON DELETE CASCADE,
     score NUMERIC(4,3) NOT NULL CHECK (score BETWEEN 0 AND 1),

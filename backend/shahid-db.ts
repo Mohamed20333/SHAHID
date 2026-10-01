@@ -319,11 +319,11 @@ export function rotateRefreshToken(database: DatabaseSync, oldId: string, newHas
       database.exec("ROLLBACK");
       throw new Error("refresh_token_reuse");
     }
-    database.prepare("UPDATE refresh_tokens SET revoked_at = ?, replaced_by = ? WHERE id = ? AND revoked_at IS NULL").run(now, newId, oldId);
     database.prepare(`
       INSERT INTO refresh_tokens (id, user_id, token_hash, family_id, created_at, expires_at)
       VALUES (?, ?, ?, ?, ?, ?)
     `).run(newId, userId, newHash, familyId, now, expiresAt);
+    database.prepare("UPDATE refresh_tokens SET revoked_at = ?, replaced_by = ? WHERE id = ? AND revoked_at IS NULL").run(now, newId, oldId);
     database.exec("COMMIT");
     return newId;
   } catch (error) {

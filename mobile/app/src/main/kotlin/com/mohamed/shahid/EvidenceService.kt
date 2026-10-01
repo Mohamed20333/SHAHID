@@ -8,6 +8,7 @@ import android.content.Intent
 import android.os.IBinder
 import java.util.concurrent.Executors
 import java.util.concurrent.atomic.AtomicLong
+import java.util.concurrent.ConcurrentHashMap
 
 class EvidenceService:Service(){
  private val executor=Executors.newSingleThreadExecutor()
@@ -17,6 +18,7 @@ class EvidenceService:Service(){
  private var deviceId:String?=null
  private var ephemeralId:String?=null
  private val sequence=AtomicLong(0)
+ private val lastObserved=ConcurrentHashMap<String,Long>()
 
  override fun onCreate(){
   super.onCreate()
@@ -32,6 +34,8 @@ class EvidenceService:Service(){
   ble=BleEvidence(this).also{b->
     b.startAdvertising(e)
     b.startScan{observedEphemeral,rssi->
+      val now=System.currentTimeMillis();val previous=lastObserved.put(observedEphemeral,now)
+      if(previous!=null && now-previous<15000)return@startScan
       executor.execute{
         try{
           val challenge=api.witnessChallenge(t,s,d)

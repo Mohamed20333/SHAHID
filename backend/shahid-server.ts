@@ -217,7 +217,7 @@ function errorResponse(error: unknown): { status: number; error: string } {
       return { status: 400, error: "invalid_json_body" };
     case "password_policy_violation":
       return { status: 400, error: "password_policy_violation" };
-    case "device_attestation_already_enrolled":
+    case "device_enrollment_already_owned":
       return { status: 409, error: "device_enrollment_conflict" };
     case "refresh_token_reuse":
       return { status: 401, error: "invalid_refresh_token" };

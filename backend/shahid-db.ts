@@ -67,7 +67,7 @@ function migrate(database: DatabaseSync): void {
       PRIMARY KEY (device_a_id, device_b_id)
     );
 
-    CREATE TABLE IF NOT EXISTS engagement_scores (
+    CREATE TABLE IF NOT EXISTS session_engagement_scores (
       student_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
       session_id TEXT NOT NULL REFERENCES class_sessions(id) ON DELETE CASCADE,
       score REAL NOT NULL CHECK (score BETWEEN 0 AND 1),
@@ -234,7 +234,7 @@ export function getPairStatsForDevice(database: DatabaseSync, deviceId: string):
 }
 
 export function getEngagementScore(database: DatabaseSync, studentId: string, sessionId: string): number | null {
-  const row = database.prepare("SELECT score FROM engagement_scores WHERE student_id = ? AND session_id = ?").get(studentId, sessionId) as { score: number } | undefined;
+  const row = database.prepare("SELECT score FROM session_engagement_scores WHERE student_id = ? AND session_id = ?").get(studentId, sessionId) as { score: number } | undefined;
   return row?.score ?? null;
 }
 

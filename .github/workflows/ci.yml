@@ -2,7 +2,7 @@ name: CI
 
 on:
   push:
-    branches: ["main", "security-hardening-v2"]
+    branches: ["main", "full-system-build"]
   pull_request:
     branches: ["main"]
 
@@ -15,38 +15,66 @@ jobs:
     runs-on: ubuntu-latest
     env:
       NODE_ENV: test
+      DATABASE_URL: postgresql://shahid:shahid@localhost:5432/shahid
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_DB: shahid
+          POSTGRES_USER: shahid
+          POSTGRES_PASSWORD: shahid
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U shahid -d shahid"
+          --health-interval 5s --health-timeout 5s --health-retries 20
     steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-
-      - name: Setup Node.js
-        uses: actions/setup-node@v4
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
         with:
           node-version: 22
-
-      - name: Install dependencies
+      - name: Install backend dependencies
         run: npm install --no-audit --fund=false
-
       - name: Typecheck
         run: npm run typecheck
-
       - name: Tests
         run: npm test
-
+      - name: PostgreSQL migrations
+        run: npm run db:migrate
       - name: Dependency audit
         run: npm audit --audit-level=high
+      - name: Frontend install and build
+        working-directory: frontend
+        run: npm install --no-audit --fund=false && npm run build
+
+  android:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+      - name: Install Gradle
+        uses: gradle/actions/setup-gradle@v4
+      - name: Build Android
+        run: gradle -p mobile :app:assembleDebug --no-daemon
+
+  docker:
+    runs-on: ubuntu-latest
+    needs: [test]
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build API image
+        run: docker build -f backend/Dockerfile .
+      - name: Build web image
+        run: docker build -f frontend/Dockerfile frontend
 
   codeql:
     name: CodeQL
     runs-on: ubuntu-latest
     steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-
-      - name: Initialize CodeQL
-        uses: github/codeql-action/init@v3
+      - uses: actions/checkout@v4
+      - uses: github/codeql-action/init@v3
         with:
           languages: javascript-typescript
-
-      - name: Analyze
-        uses: github/codeql-action/analyze@v3
+      - uses: github/codeql-action/analyze@v3

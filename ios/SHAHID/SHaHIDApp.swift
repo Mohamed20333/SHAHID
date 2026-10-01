@@ -41,8 +41,8 @@ final class AppModel: ObservableObject {
         guard let token else { status = "Login first"; return }
         do {
             let key = try keyStore.getOrCreate()
-            let keyId = key.publicKey.derRepresentation.base64EncodedString()
-            let challenge: EnrollmentChallenge = try await APIClient(baseURL: apiBase).send("/devices/enroll/challenge", token: token, body: ["publicKey": key.publicKey.rawRepresentation.base64EncodedString(), "keyId": keyId])
+            let keyId = Canonical.keyId(key.publicKey.rawRepresentation)
+            let challenge: EnrollmentChallenge = try await APIClient(baseURL: apiBase).send("/devices/enroll/challenge", token: token, body: ["publicKey": "-----BEGIN PUBLIC KEY-----\\n\\(Canonical.spki(key.publicKey.rawRepresentation).base64EncodedString())\\n-----END PUBLIC KEY-----", "keyId": keyId])
             let signature = try key.privateKey.signature(for: Canonical.data(["challengeId": challenge.challengeId, "keyId": challenge.keyId, "nonce": challenge.nonce, "purpose": "device_enrollment"]))
             let result: DeviceResponse = try await APIClient(baseURL: apiBase).send("/devices/enroll/complete", token: token, body: ["challengeId": challenge.challengeId, "signature": signature.base64EncodedString()])
             deviceId = result.deviceId

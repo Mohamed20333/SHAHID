@@ -8,7 +8,7 @@
     "node": ">=22.0.0"
   },
   "scripts": {
-    "test": "tsx --test backend/shahid-server.test.ts",
+    "test": "tsx --test backend/shahid-server.test.ts backend/shahid-device-crypto.test.ts",
     "demo": "tsx backend/shahid-demo.ts",
     "start": "tsx backend/shahid-server.ts",
     "typecheck": "tsc --noEmit",

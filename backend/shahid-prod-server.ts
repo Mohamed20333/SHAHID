@@ -271,6 +271,17 @@ const server=createServer(async(req,res)=>{
       const q=await pool.query("SELECT cs.id,cs.status,cs.started_at,cs.ended_at,c.code,c.title,se.term FROM class_sessions cs JOIN sections se ON se.id=cs.section_id JOIN courses c ON c.id=se.course_id WHERE se.instructor_id=$1 ORDER BY cs.started_at DESC LIMIT 100",[u.id]);send(res,req,200,{sessions:q.rows});return;
     }
 
+    if(method==="GET"&&/^\/sessions\/[^/]+\/evidence-graph$/.test(path)){
+      const sessionId=path.split("/")[2];
+      const s=(await pool.query<any>("SELECT cs.id,se.instructor_id FROM class_sessions cs JOIN sections se ON se.id=cs.section_id WHERE cs.id=$1",[sessionId])).rows[0];
+      if(!s){send(res,req,404,{error:"session_not_found",requestId});return;}
+      if(s.instructor_id!==u.id){send(res,req,403,{error:"forbidden",requestId});return;}
+      const students=await pool.query<any>("SELECT DISTINCT ar.student_id AS id,u.full_name AS label,'student' AS type FROM attendance_records ar JOIN users u ON u.id=ar.student_id WHERE ar.session_id=$1",[sessionId]);
+      const devices=await pool.query<any>("SELECT DISTINCT d.id,d.user_id AS owner_id,'device' AS type FROM devices d WHERE d.id IN (SELECT device_id FROM attendance_records WHERE session_id=$1 UNION SELECT observer_device_id FROM witness_observations WHERE session_id=$1 UNION SELECT observed_device_id FROM witness_observations WHERE session_id=$1)",[sessionId]);
+      const edges=await pool.query<any>("SELECT 'check_in' AS type,ar.student_id AS source,ar.device_id AS target FROM attendance_records ar WHERE ar.session_id=$1 UNION ALL SELECT 'witness' AS type,w.observer_device_id AS source,w.observed_device_id AS target FROM witness_observations w WHERE w.session_id=$1",[sessionId]);
+      send(res,req,200,{sessionId,nodes:[...students.rows,...devices.rows],edges:edges.rows});return;
+    }
+
     if(method==="GET"&&/^\/sessions\/[^/]+\/overview$/.test(path)){
       const sessionId=path.split("/")[2];const s=(await pool.query<any>("SELECT cs.id,cs.status,cs.started_at,cs.ended_at,se.instructor_id,c.code,c.title,se.term FROM class_sessions cs JOIN sections se ON se.id=cs.section_id JOIN courses c ON c.id=se.course_id WHERE cs.id=$1",[sessionId])).rows[0];
       if(!s){send(res,req,404,{error:"session_not_found",requestId});return;}

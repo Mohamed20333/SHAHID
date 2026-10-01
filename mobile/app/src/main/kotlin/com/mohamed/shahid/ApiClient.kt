@@ -21,4 +21,5 @@ class ApiClient(private val baseUrl:String){
  fun completeEnrollment(token:String,challengeId:String,signature:String)=request("/devices/enroll/complete","POST",token,JSONObject().put("challengeId",challengeId).put("signature",signature))
  fun sessionChallenge(token:String,deviceId:String,sessionId:String)=request("/devices/proof-challenge","POST",token,JSONObject().put("deviceId",deviceId).put("sessionId",sessionId))
  fun checkIn(token:String,sessionId:String,deviceId:String,challengeId:String,signature:String,timestamp:String)=request("/sessions/$sessionId/check-in","POST",token,JSONObject().put("deviceId",deviceId).put("challengeId",challengeId).put("signature",signature).put("timestamp",timestamp))
+ fun witness(token:String,sessionId:String,observerDeviceId:String,observedDeviceId:String,rssi:Int,nonce:String,signature:String,timestamp:String,ephemeralId:String)=request("/sessions/$sessionId/witnesses","POST",token,JSONObject().put("observedDeviceId",observedDeviceId).put("rssi",rssi).put("nonce",nonce).put("signature",signature).put("timestamp",timestamp).put("observationType","ble_proximity").put("protocolVersion","1").put("ephemeralId",ephemeralId))
 }

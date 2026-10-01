@@ -11,6 +11,7 @@ import {
   verifyPassword,
 } from "./shahid-auth";
 import { canonicalProof, isFreshIsoTimestamp, keyFingerprint, normalizePublicKey, verifyDeviceSignature } from "./shahid-device-crypto";
+import { assessRisk } from "./shahid-risk";
 
 const PORT = Number(process.env.PORT ?? 8080);
 const DATABASE_URL = process.env.DATABASE_URL;
@@ -238,6 +239,23 @@ const server=createServer(async(req,res)=>{
       if(!requireRole(u,"dept_admin","university_admin","platform_admin")){send(res,req,403,{error:"forbidden_role",requestId});return;}
       const deviceId=path.split("/")[3];const q=await pool.query("UPDATE devices SET status='revoked' WHERE id=$1 AND user_id IN (SELECT id FROM users WHERE university_id=(SELECT university_id FROM users WHERE id=$2)) RETURNING id",[deviceId,u.id]);
       if(!q.rowCount){send(res,req,404,{error:"device_not_found",requestId});return;}await audit(u.id,"DEVICE_REVOKED","devices",deviceId,"administrator_action",{requestId});send(res,req,200,{revoked:true});return;
+    }
+
+    if(method==="POST"&&/^\/sessions\/[^/]+\/risk\/[^/]+$/.test(path)){
+      if(!requireRole(u,"professor","dept_admin","university_admin")){send(res,req,403,{error:"forbidden_role",requestId});return;}
+      const [, , sessionId, studentId]=path.split("/");
+      const session=(await pool.query<any>("SELECT cs.id,se.instructor_id FROM class_sessions cs JOIN sections se ON se.id=cs.section_id WHERE cs.id=$1",[sessionId])).rows[0];
+      if(!session||session.instructor_id!==u.id){send(res,req,403,{error:"forbidden",requestId});return;}
+      const attendance=(await pool.query<any>("SELECT proof_verified,device_id FROM attendance_records WHERE session_id=$1 AND student_id=$2",[sessionId,studentId])).rows[0];
+      if(!attendance){send(res,req,404,{error:"attendance_not_found",requestId});return;}
+      const witnesses=(await pool.query<any>("SELECT COUNT(DISTINCT observer.user_id)::int AS count FROM witness_observations w JOIN devices observer ON observer.id=w.observer_device_id JOIN devices observed ON observed.id=w.observed_device_id WHERE w.session_id=$1 AND w.observed_device_id=$2 AND observer.user_id<>observed.user_id",[sessionId,attendance.device_id])).rows[0].count;
+      // RSSI magnitude alone is not a contradiction signal; keep this zero until a calibrated
+      // contradiction model exists rather than inventing certainty from radio noise.
+      const conflicts=0;
+      const replay=(await pool.query<any>("SELECT COUNT(*)::int AS count FROM audit_log WHERE actor_id=$1 AND action IN ('WITNESS_SIGNATURE_INVALID','DEVICE_SIGNATURE_INVALID') AND occurred_at > now()-interval '1 hour'",[studentId])).rows[0].count;
+      const result=assessRisk({proofVerified:attendance.proof_verified,independentWitnesses:witnesses,conflictingObservations:conflicts,staleObservations:0,replayEvents:replay});
+      await pool.query("INSERT INTO risk_assessments(id,session_id,student_id,risk_score,reasons,computed_at) VALUES($1,$2,$3,$4,$5,now()) ON CONFLICT(session_id,student_id) DO UPDATE SET risk_score=EXCLUDED.risk_score,reasons=EXCLUDED.reasons,computed_at=now()",[randomUUID(),sessionId,studentId,result.score,JSON.stringify({status:result.status,confidence:result.confidence,reasons:result.reasons})]);
+      send(res,req,200,{sessionId,studentId,...result});return;
     }
 
     if(method==="GET"&&path==="/me"){const q=await pool.query("SELECT id,role,full_name,email,university_id FROM users WHERE id=$1",[u.id]);send(res,req,200,q.rows[0]);return;}

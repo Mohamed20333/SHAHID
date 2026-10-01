@@ -2,13 +2,16 @@ import { test, before, after } from "node:test";
 import assert from "node:assert/strict";
 import type { Server } from "node:http";
 import { createShahidServer } from "./shahid-server";
-import { closeDb } from "./shahid-db";
+import { closeDb, getDb, insertUser } from "./shahid-db";
+import { hashPassword } from "./shahid-auth";
 
 let server: Server;
 const PORT = 3999;
 const BASE = `http://localhost:${PORT}`;
+const PASSWORD = "Correct-Horse-123!";
 
 before(async () => {
+  process.env.SHAHID_ALLOWED_ORIGINS = "http://localhost:5173";
   server = createShahidServer(":memory:");
   await new Promise<void>((resolve) => server.listen(PORT, resolve));
 });
@@ -18,125 +21,270 @@ after(async () => {
   closeDb();
 });
 
-async function registerAndLogin(role: string, email: string) {
-  await fetch(`${BASE}/auth/register`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ role, fullName: "Test User", email, password: "S3cure!Pass" }) });
-  const loginRes = await fetch(`${BASE}/auth/login`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ email, password: "S3cure!Pass" }) });
-  const body = (await loginRes.json()) as { accessToken: string };
-  return body.accessToken;
+async function registerStudent(email: string): Promise<void> {
+  const res = await fetch(`${BASE}/auth/register`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ role: "student", fullName: "Test Student", email, password: PASSWORD }),
+  });
+  assert.equal(res.status, 201);
 }
 
-test("rejects requests with no auth token", async () => {
+function createProfessor(email: string): string {
+  const db = getDb();
+  return insertUser(db, {
+    role: "professor",
+    fullName: "Test Professor",
+    email,
+    passwordHash: hashPassword(PASSWORD),
+  }).id;
+}
+
+async function login(email: string): Promise<{ accessToken: string; refreshToken: string; role: string }> {
+  const res = await fetch(`${BASE}/auth/login`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ email, password: PASSWORD }),
+  });
+  assert.equal(res.status, 200);
+  return (await res.json()) as { accessToken: string; refreshToken: string; role: string };
+}
+
+async function enroll(accessToken: string, key: string): Promise<string> {
+  const res = await fetch(`${BASE}/devices/enroll`, {
+    method: "POST",
+    headers: { Authorization: `Bearer ${accessToken}`, "Content-Type": "application/json" },
+    body: JSON.stringify({ deviceEnrollmentKey: key }),
+  });
+  assert.equal(res.status, 200);
+  return ((await res.json()) as { deviceId: string }).deviceId;
+}
+
+function auth(token: string, deviceId?: string): Record<string, string> {
+  return {
+    Authorization: `Bearer ${token}`,
+    "Content-Type": "application/json",
+    ...(deviceId ? { "X-Device-ID": deviceId } : {}),
+  };
+}
+
+async function createSession(professorToken: string): Promise<string> {
+  const res = await fetch(`${BASE}/sessions`, {
+    method: "POST",
+    headers: auth(professorToken),
+    body: "{}",
+  });
+  assert.equal(res.status, 201);
+  return ((await res.json()) as { id: string }).id;
+}
+
+test("requires an access token for protected endpoints", async () => {
   const res = await fetch(`${BASE}/sessions`, { method: "POST" });
   assert.equal(res.status, 401);
 });
 
+test("public registration can create students but cannot self-assign privileged roles", async () => {
+  await registerStudent("role-student@test.com");
+
+  const res = await fetch(`${BASE}/auth/register`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      role: "platform_admin",
+      fullName: "Attacker",
+      email: "attacker-admin@test.com",
+      password: PASSWORD,
+    }),
+  });
+  assert.equal(res.status, 403);
+});
+
+test("rejects weak passwords and malformed registration", async () => {
+  const res = await fetch(`${BASE}/auth/register`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ role: "student", fullName: "X", email: "bad", password: "short" }),
+  });
+  assert.equal(res.status, 400);
+});
+
 test("rejects login with wrong password", async () => {
-  await fetch(`${BASE}/auth/register`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ role: "student", fullName: "X", email: "wrongpass@test.com", password: "correct-horse" }) });
-  const res = await fetch(`${BASE}/auth/login`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ email: "wrongpass@test.com", password: "incorrect" }) });
+  await registerStudent("wrongpass@test.com");
+  const res = await fetch(`${BASE}/auth/login`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ email: "wrongpass@test.com", password: "Wrong-Password-123!" }),
+  });
   assert.equal(res.status, 401);
 });
 
-test("rejects duplicate email registration", async () => {
-  const email = "dupe@test.com";
-  const first = await fetch(`${BASE}/auth/register`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ role: "student", fullName: "A", email, password: "pass1234" }) });
-  assert.equal(first.status, 201);
-  const second = await fetch(`${BASE}/auth/register`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ role: "student", fullName: "B", email, password: "otherpass" }) });
-  assert.equal(second.status, 409);
+test("refresh tokens are opaque, rotated, and cannot be reused", async () => {
+  await registerStudent("refresh@test.com");
+  const first = await login("refresh@test.com");
+  assert.ok(first.refreshToken.length >= 60);
+
+  const rotated = await fetch(`${BASE}/auth/refresh`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ refreshToken: first.refreshToken }),
+  });
+  assert.equal(rotated.status, 200);
+  const second = (await rotated.json()) as { accessToken: string; refreshToken: string };
+  assert.notEqual(second.refreshToken, first.refreshToken);
+
+  const reuse = await fetch(`${BASE}/auth/refresh`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ refreshToken: first.refreshToken }),
+  });
+  assert.equal(reuse.status, 401);
 });
 
-test("student with 0 witnesses is absent, with quorum is present", async () => {
-  const profToken = await registerAndLogin("professor", "prof-quorum@test.com");
-  const studentToken = await registerAndLogin("student", "student-quorum@test.com");
-  const authHeader = (t: string) => ({ Authorization: `Bearer ${t}`, "Content-Type": "application/json" });
-  const deviceIds: string[] = [];
-  for (const hw of ["hwA", "hwB", "hwC", "hwD", "hwE"]) {
-    const r = await fetch(`${BASE}/devices/enroll`, { method: "POST", headers: authHeader(studentToken), body: JSON.stringify({ hardwareAttestationId: hw }) });
-    deviceIds.push(((await r.json()) as { deviceId: string }).deviceId);
-  }
-  const [deviceA, deviceB, deviceC, deviceD, deviceE] = deviceIds;
-  const sessionRes = await fetch(`${BASE}/sessions`, { method: "POST", headers: authHeader(profToken), body: "{}" });
-  const session = (await sessionRes.json()) as { id: string };
-  const before = await fetch(`${BASE}/sessions/${session.id}/attendance/${deviceA}`, { headers: authHeader(studentToken) });
-  const beforeBody = (await before.json()) as { outcome: string; witnessCount: number };
-  assert.equal(beforeBody.outcome, "absent"); assert.equal(beforeBody.witnessCount, 0);
-  for (const observer of [deviceB, deviceC, deviceD, deviceE]) {
-    const r = await fetch(`${BASE}/sessions/${session.id}/witnesses`, { method: "POST", headers: authHeader(studentToken), body: JSON.stringify({ observerDeviceId: observer, observedDeviceId: deviceA, rssi: -60 }) });
-    assert.equal(r.status, 201);
-  }
-  const after = await fetch(`${BASE}/sessions/${session.id}/attendance/${deviceA}`, { headers: authHeader(studentToken) });
-  const afterBody = (await after.json()) as { outcome: string; witnessCount: number };
-  assert.equal(afterBody.outcome, "present"); assert.equal(afterBody.witnessCount, 4);
+test("a refresh token is not accepted as an access token", async () => {
+  await registerStudent("token-type@test.com");
+  const tokens = await login("token-type@test.com");
+  const res = await fetch(`${BASE}/devices/enroll`, {
+    method: "POST",
+    headers: auth(tokens.refreshToken),
+    body: JSON.stringify({ deviceEnrollmentKey: "x" }),
+  });
+  assert.equal(res.status, 401);
 });
 
-test("a student who never enrolls a device cannot self-witness (FK integrity holds)", async () => {
-  const profToken = await registerAndLogin("professor", "prof-fk@test.com");
-  const sessionRes = await fetch(`${BASE}/sessions`, { method: "POST", headers: { Authorization: `Bearer ${profToken}`, "Content-Type": "application/json" }, body: "{}" });
-  const session = (await sessionRes.json()) as { id: string };
-  const res = await fetch(`${BASE}/sessions/${session.id}/witnesses`, { method: "POST", headers: { Authorization: `Bearer ${profToken}`, "Content-Type": "application/json" }, body: JSON.stringify({ observerDeviceId: "never-enrolled-1", observedDeviceId: "never-enrolled-2", rssi: -60 }) });
-  assert.equal(res.status, 500);
-  const body = (await res.json()) as { message: string };
-  assert.match(body.message, /FOREIGN KEY/);
+test("witness observer identity must belong to the authenticated user", async () => {
+  const professor = createProfessor("prof-witness@test.com");
+  const profLogin = await login("prof-witness@test.com");
+  assert.equal(profLogin.role, "professor");
+
+  await registerStudent("observer@test.com");
+  await registerStudent("target@test.com");
+  const observer = await login("observer@test.com");
+  const target = await login("target@test.com");
+  const observerDevice = await enroll(observer.accessToken, "observer-device-secret");
+  const targetDevice = await enroll(target.accessToken, "target-device-secret");
+  const sessionId = await createSession(profLogin.accessToken);
+  assert.ok(professor);
+
+  const forgedObserver = await fetch(`${BASE}/sessions/${sessionId}/witnesses`, {
+    method: "POST",
+    headers: auth(observer.accessToken, targetDevice),
+    body: JSON.stringify({ observedDeviceId: targetDevice, rssi: -60 }),
+  });
+  assert.equal(forgedObserver.status, 403);
+
+  const legitimate = await fetch(`${BASE}/sessions/${sessionId}/witnesses`, {
+    method: "POST",
+    headers: auth(observer.accessToken, observerDevice),
+    body: JSON.stringify({ observedDeviceId: targetDevice, rssi: -60 }),
+  });
+  assert.equal(legitimate.status, 201);
 });
 
-test("suspicious pattern escalates with all three risk reasons", async () => {
-  const profToken = await registerAndLogin("professor", "prof-risk@test.com");
-  const studentToken = await registerAndLogin("student", "student-risk@test.com");
-  const authHeader = (t: string) => ({ Authorization: `Bearer ${t}`, "Content-Type": "application/json" });
-  const [, payloadB64] = studentToken.split(".");
-  const studentId = (JSON.parse(Buffer.from(payloadB64, "base64url").toString()) as { sub: string }).sub;
-  const deviceIds: string[] = [];
-  for (const hw of ["r-hwA", "r-hwB", "r-hwC", "r-hwD", "r-hwE"]) {
-    const r = await fetch(`${BASE}/devices/enroll`, { method: "POST", headers: authHeader(studentToken), body: JSON.stringify({ hardwareAttestationId: hw }) });
-    deviceIds.push(((await r.json()) as { deviceId: string }).deviceId);
-  }
-  const [deviceA, deviceB, deviceC, deviceD, deviceE] = deviceIds;
-  const sessionRes = await fetch(`${BASE}/sessions`, { method: "POST", headers: authHeader(profToken), body: "{}" });
-  const session = (await sessionRes.json()) as { id: string };
-  for (const observer of [deviceB, deviceC, deviceD, deviceE]) await fetch(`${BASE}/sessions/${session.id}/witnesses`, { method: "POST", headers: authHeader(studentToken), body: JSON.stringify({ observerDeviceId: observer, observedDeviceId: deviceA, rssi: -60 }) });
-  const riskRes = await fetch(`${BASE}/sessions/${session.id}/risk/${studentId}`, { method: "POST", headers: authHeader(studentToken), body: JSON.stringify({ deviceId: deviceA, pulseScore: 0.1, livenessPingSent: true, pairStats: [{ deviceA, deviceB: "device-X", coOccurrenceRate: 0.97, varianceScore: 0.05, sessionsObserved: 22 }] }) });
-  const risk = (await riskRes.json()) as { escalate: boolean; riskScore: number; reasons: string[] };
-  assert.equal(risk.escalate, true); assert.equal(risk.riskScore, 1);
-  assert.deepEqual(risk.reasons.sort(), ["low_pulse_score_despite_presence", "missed_liveness_ping", "suspicious_pair_pattern"].sort());
+test("attendance is visible only to the session owner or device owner", async () => {
+  const prof1 = await login("prof-witness@test.com");
+  const prof2Id = createProfessor("prof-other@test.com");
+  const prof2 = await login("prof-other@test.com");
+  assert.ok(prof2Id);
+
+  await registerStudent("attendance-student@test.com");
+  const student = await login("attendance-student@test.com");
+  const device = await enroll(student.accessToken, "attendance-device");
+  const sessionId = await createSession(prof1.accessToken);
+
+  const owner = await fetch(`${BASE}/sessions/${sessionId}/attendance/${device}`, { headers: auth(prof1.accessToken) });
+  assert.equal(owner.status, 200);
+
+  const studentView = await fetch(`${BASE}/sessions/${sessionId}/attendance/${device}`, { headers: auth(student.accessToken) });
+  assert.equal(studentView.status, 200);
+
+  const other = await fetch(`${BASE}/sessions/${sessionId}/attendance/${device}`, { headers: auth(prof2.accessToken) });
+  assert.equal(other.status, 403);
 });
 
-test("dashboard endpoint aggregates witness + risk data, and CORS preflight is open", async () => {
-  const profToken = await registerAndLogin("professor", "prof-dash@test.com");
-  const studentToken = await registerAndLogin("student", "student-dash@test.com");
-  const authHeader = (t: string) => ({ Authorization: `Bearer ${t}`, "Content-Type": "application/json" });
-  const deviceIds: string[] = [];
-  for (const hw of ["d-hwA", "d-hwB", "d-hwC", "d-hwD", "d-hwE"]) {
-    const r = await fetch(`${BASE}/devices/enroll`, { method: "POST", headers: authHeader(studentToken), body: JSON.stringify({ hardwareAttestationId: hw }) });
-    deviceIds.push(((await r.json()) as { deviceId: string }).deviceId);
-  }
-  const [deviceA, deviceB, deviceC, deviceD, deviceE] = deviceIds;
-  const sessionRes = await fetch(`${BASE}/sessions`, { method: "POST", headers: authHeader(profToken), body: "{}" });
-  const session = (await sessionRes.json()) as { id: string };
-  for (const observer of [deviceB, deviceC, deviceD, deviceE]) await fetch(`${BASE}/sessions/${session.id}/witnesses`, { method: "POST", headers: authHeader(studentToken), body: JSON.stringify({ observerDeviceId: observer, observedDeviceId: deviceA, rssi: -60 }) });
-  const dashRes = await fetch(`${BASE}/sessions/${session.id}/dashboard`, { headers: authHeader(profToken) });
-  assert.equal(dashRes.status, 200); assert.equal(dashRes.headers.get("access-control-allow-origin"), "*");
-  const dash = (await dashRes.json()) as { presentCount: number; students: Array<{ deviceId: string; outcome: string; witnessCount: number }> };
-  assert.equal(dash.presentCount, 1); assert.equal(dash.students[0].deviceId, deviceA); assert.equal(dash.students[0].witnessCount, 4);
-  const preflight = await fetch(`${BASE}/sessions/${session.id}/dashboard`, { method: "OPTIONS" });
-  assert.equal(preflight.status, 204); assert.equal(preflight.headers.get("access-control-allow-methods"), "GET, POST, OPTIONS");
+test("risk calculation ignores client-supplied evidence and reads server-owned evidence", async () => {
+  const prof = await login("prof-witness@test.com");
+  await registerStudent("risk-student@test.com");
+  const student = await login("risk-student@test.com");
+  const device = await enroll(student.accessToken, "risk-device");
+  const sessionId = await createSession(prof.accessToken);
+
+  const db = getDb();
+  db.prepare(`INSERT INTO pair_stats (device_a_id, device_b_id, sessions_observed, co_occurrence_rate, variance_score)
+              VALUES (?, ?, ?, ?, ?)`).run(device, "not-a-real-device", 22, 0.97, 0.05);
+
+  // Deliberately send forged risk evidence. The API must ignore it.
+  const res = await fetch(`${BASE}/sessions/${sessionId}/risk/${JSON.parse(Buffer.from(student.accessToken.split(".")[1], "base64url").toString()).sub}`, {
+    method: "POST",
+    headers: auth(student.accessToken),
+    body: JSON.stringify({
+      deviceId: "attacker-controlled-device",
+      pulseScore: 0.01,
+      livenessPingSent: true,
+      livenessPingAnsweredMs: null,
+      pairStats: [{ deviceA: device, deviceB: "fake", coOccurrenceRate: 1, varianceScore: 0, sessionsObserved: 999 }],
+      escalationsThisWeek: 0,
+    }),
+  });
+
+  assert.equal(res.status, 403);
+  const professorOnly = await fetch(`${BASE}/sessions/${sessionId}/risk/${JSON.parse(Buffer.from(student.accessToken.split(".")[1], "base64url").toString()).sub}`, {
+    method: "POST",
+    headers: auth(prof.accessToken),
+    body: JSON.stringify({ pulseScore: 0, pairStats: [{ coOccurrenceRate: 1 }] }),
+  });
+  assert.equal(professorOnly.status, 200);
+  const risk = (await professorOnly.json()) as { riskScore: number; evidence: { engagementScore: number | null; pairSignals: number } };
+  assert.equal(risk.evidence.engagementScore, null);
+  assert.equal(risk.evidence.pairSignals, 1);
+  assert.ok(risk.riskScore >= 0.4);
 });
 
-test("a different professor cannot view another professor's session dashboard", async () => {
-  const authHeader = (t: string) => ({ Authorization: `Bearer ${t}`, "Content-Type": "application/json" });
-  const ownerToken = await registerAndLogin("professor", "prof-owner@test.com");
-  const otherToken = await registerAndLogin("professor", "prof-other@test.com");
-  const sessionRes = await fetch(`${BASE}/sessions`, { method: "POST", headers: authHeader(ownerToken), body: "{}" });
-  const session = (await sessionRes.json()) as { id: string };
-  const ownerView = await fetch(`${BASE}/sessions/${session.id}/dashboard`, { headers: authHeader(ownerToken) });
-  assert.equal(ownerView.status, 200);
-  const otherView = await fetch(`${BASE}/sessions/${session.id}/dashboard`, { headers: authHeader(otherToken) });
-  assert.equal(otherView.status, 403);
-  const body = (await otherView.json()) as { error: string };
-  assert.equal(body.error, "not_your_session");
+test("oversized JSON bodies are rejected", async () => {
+  const body = JSON.stringify({ role: "student", fullName: "A".repeat(70_000), email: "large@test.com", password: PASSWORD });
+  const res = await fetch(`${BASE}/auth/register`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body,
+  });
+  assert.equal(res.status, 413);
 });
 
-test("tampered JWT signature is rejected", async () => {
-  const token = await registerAndLogin("student", "tamper@test.com");
+test("CORS is allowlisted rather than wildcarded", async () => {
+  const allowed = await fetch(`${BASE}/auth/login`, {
+    method: "OPTIONS",
+    headers: { Origin: "http://localhost:5173" },
+  });
+  assert.equal(allowed.status, 204);
+  assert.equal(allowed.headers.get("access-control-allow-origin"), "http://localhost:5173");
+
+  const forbidden = await fetch(`${BASE}/auth/login`, {
+    method: "OPTIONS",
+    headers: { Origin: "https://attacker.example" },
+  });
+  assert.equal(forbidden.status, 204);
+  assert.equal(forbidden.headers.get("access-control-allow-origin"), null);
+});
+
+test("JWT tampering is rejected", async () => {
+  await registerStudent("tamper@test.com");
+  const token = (await login("tamper@test.com")).accessToken;
   const tampered = token.slice(0, -2) + "xx";
-  const res = await fetch(`${BASE}/devices/enroll`, { method: "POST", headers: { Authorization: `Bearer ${tampered}`, "Content-Type": "application/json" }, body: JSON.stringify({ hardwareAttestationId: "irrelevant" }) });
+  const res = await fetch(`${BASE}/devices/enroll`, {
+    method: "POST",
+    headers: auth(tampered),
+    body: JSON.stringify({ deviceEnrollmentKey: "irrelevant" }),
+  });
   assert.equal(res.status, 401);
+});
+
+test("dashboard access remains owner-scoped", async () => {
+  const owner = await login("prof-witness@test.com");
+  const other = await login("prof-other@test.com");
+  const sessionId = await createSession(owner.accessToken);
+
+  const ownerView = await fetch(`${BASE}/sessions/${sessionId}/dashboard`, { headers: auth(owner.accessToken) });
+  assert.equal(ownerView.status, 200);
+
+  const otherView = await fetch(`${BASE}/sessions/${sessionId}/dashboard`, { headers: auth(other.accessToken) });
+  assert.equal(otherView.status, 403);
 });

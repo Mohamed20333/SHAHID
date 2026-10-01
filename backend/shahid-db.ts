@@ -158,9 +158,13 @@ export function insertWitnessObservation(database: DatabaseSync, params: { sessi
 
 export function countIndependentWitnesses(database: DatabaseSync, sessionId: string, observedDeviceId: string): number {
   const row = database.prepare(`
-    SELECT COUNT(DISTINCT observer_device_id) AS cnt
-    FROM witness_observations
-    WHERE session_id = ? AND observed_device_id = ?
+    SELECT COUNT(DISTINCT observer.user_id) AS cnt
+    FROM witness_observations w
+    JOIN devices observer ON observer.id = w.observer_device_id
+    JOIN devices observed ON observed.id = w.observed_device_id
+    WHERE w.session_id = ?
+      AND w.observed_device_id = ?
+      AND observer.user_id <> observed.user_id
   `).get(sessionId, observedDeviceId) as { cnt: number };
   return row.cnt;
 }

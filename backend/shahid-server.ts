@@ -37,6 +37,7 @@ import {
   revokeRefreshToken,
   rotateRefreshToken,
   upsertRiskAssessment,
+  writeAuditLog,
 } from "./shahid-db";
 import {
   CONFIG,
@@ -267,6 +268,7 @@ export function createShahidServer(dbPath: string = ":memory:") {
           return;
         }
         if (body.role !== undefined && body.role !== "student") {
+          writeAuditLog(db, { action: "PRIVILEGED_REGISTRATION_BLOCKED", targetType: "registration", reasonCode: "public_role_escalation", metadata: { requestId: id, requestedRole: body.role } });
           finish(403, { error: "privileged_role_registration_forbidden", requestId: id });
           return;
         }
@@ -325,6 +327,7 @@ export function createShahidServer(dbPath: string = ":memory:") {
 
         if (stored.revoked_at) {
           revokeRefreshFamily(db, stored.family_id);
+          writeAuditLog(db, { actorId: stored.user_id, action: "REFRESH_TOKEN_REUSE", targetType: "refresh_token", targetId: stored.id, reasonCode: "revoked_token_replay", metadata: { requestId: id } });
           logEvent({ requestId: id, securityEvent: "refresh_token_reuse", userId: stored.user_id });
           finish(401, { error: "invalid_refresh_token", requestId: id });
           return;
@@ -418,6 +421,7 @@ export function createShahidServer(dbPath: string = ":memory:") {
         // authenticated user and a device they actually own. The body can no
         // longer nominate an arbitrary observer device.
         if (!observerDeviceId || !getUserDevice(db, authed.sub, observerDeviceId)) {
+          writeAuditLog(db, { actorId: authed.sub, action: "DEVICE_SPOOF_ATTEMPT", targetType: "device", targetId: observerDeviceId, reasonCode: "observer_not_owned", metadata: { requestId: id, sessionId } });
           finish(403, { error: "observer_device_not_owned", requestId: id });
           return;
         }
@@ -431,6 +435,7 @@ export function createShahidServer(dbPath: string = ":memory:") {
           return;
         }
         if (observedDevice.user_id === authed.sub) {
+          writeAuditLog(db, { actorId: authed.sub, action: "SELF_WITNESS_BLOCKED", targetType: "device", targetId: observedDeviceId, reasonCode: "observer_and_observed_same_user", metadata: { requestId: id, sessionId } });
           finish(403, { error: "self_witness_forbidden", requestId: id });
           return;
         }
@@ -450,6 +455,7 @@ export function createShahidServer(dbPath: string = ":memory:") {
           return;
         }
         if (session.instructor_id !== authed.sub && device.user_id !== authed.sub) {
+          writeAuditLog(db, { actorId: authed.sub, action: "ATTENDANCE_ACCESS_DENIED", targetType: "session", targetId: sessionId, reasonCode: "not_owner_or_subject", metadata: { requestId: id, deviceId } });
           finish(403, { error: "forbidden", requestId: id });
           return;
         }
@@ -483,6 +489,7 @@ export function createShahidServer(dbPath: string = ":memory:") {
           return;
         }
         if (session.instructor_id !== authed.sub) {
+          writeAuditLog(db, { actorId: authed.sub, action: "SESSION_ACCESS_DENIED", targetType: "session", targetId: sessionId, reasonCode: "not_session_owner", metadata: { requestId: id } });
           finish(403, { error: "not_your_session", requestId: id });
           return;
         }

@@ -1,11 +1,10 @@
 package com.mohamed.shahid
+
 import android.bluetooth.BluetoothManager
-import android.bluetooth.le.AdvertiseCallback
-import android.bluetooth.le.AdvertiseData
-import android.bluetooth.le.AdvertiseSettings
 import android.bluetooth.le.*
 import android.content.Context
 import android.os.ParcelUuid
+import android.util.Base64
 import java.util.UUID
 
 class BleEvidence(private val context:Context){
@@ -15,20 +14,24 @@ class BleEvidence(private val context:Context){
  private var callback:ScanCallback?=null
  private var advertiser:BluetoothLeAdvertiser?=null
  private var advertiseCallback:AdvertiseCallback?=null
+
  fun startScan(onObservation:(String,Int)->Unit){
-   scanner=adapter.bluetoothLeScanner
+   scanner=adapter.bluetoothLeScanner ?: return
    callback=object:ScanCallback(){
      override fun onScanResult(type:Int,result:ScanResult){
-       result.scanRecord?.serviceUuids?.firstOrNull{it==serviceUuid}?.let{onObservation(result.device.address,result.rssi)}
+       val raw=result.scanRecord?.getServiceData(serviceUuid) ?: return
+       val ephemeral=Base64.encodeToString(raw,Base64.URL_SAFE or Base64.NO_WRAP or Base64.NO_PADDING)
+       onObservation(ephemeral,result.rssi)
      }
      override fun onScanFailed(errorCode:Int){}
    }
    scanner?.startScan(callback)
  }
- fun startAdvertising(ephemeralId:ByteArray){
+ fun startAdvertising(ephemeralId:String){
    advertiser=adapter.bluetoothLeAdvertiser ?: return
+   val bytes=Base64.decode(ephemeralId,Base64.URL_SAFE or Base64.NO_WRAP)
    val settings=AdvertiseSettings.Builder().setAdvertiseMode(AdvertiseSettings.ADVERTISE_MODE_LOW_POWER).setTxPowerLevel(AdvertiseSettings.ADVERTISE_TX_POWER_LOW).setConnectable(false).build()
-   val data=AdvertiseData.Builder().setIncludeDeviceName(false).addServiceUuid(serviceUuid).addServiceData(serviceUuid,ephemeralId.copyOf(minOf(16,ephemeralId.size))).build()
+   val data=AdvertiseData.Builder().setIncludeDeviceName(false).addServiceUuid(serviceUuid).addServiceData(serviceUuid,bytes.copyOf(minOf(16,bytes.size))).build()
    advertiseCallback=object:AdvertiseCallback(){}
    advertiser?.startAdvertising(settings,data,advertiseCallback)
  }

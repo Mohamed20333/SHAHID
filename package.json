@@ -15,7 +15,8 @@
     "check": "npm run typecheck && npm test",
     "lint": "tsc --noEmit",
     "start:prod": "tsx backend/shahid-prod-server.ts",
-    "db:migrate": "tsx backend/shahid-migrate.ts"
+    "db:migrate": "tsx backend/shahid-migrate.ts",
+    "seed:pilot": "tsx backend/shahid-seed.ts"
   },
   "devDependencies": {
     "tsx": "^4.19.2",

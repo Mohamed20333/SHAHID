@@ -268,7 +268,7 @@ const server=createServer(async(req,res)=>{
 
     if(method==="GET"&&path==="/professor/sessions"){
       if(!requireRole(u,"professor","dept_admin","university_admin")){send(res,req,403,{error:"forbidden_role",requestId});return;}
-      const q=await pool.query("SELECT cs.id,cs.status,cs.started_at,cs.ended_at,c.code,c.title,se.term FROM class_sessions cs JOIN sections se ON se.id=cs.section_id JOIN courses c ON c.id=se.course_id WHERE se.instructor_id=$1 ORDER BY cs.started_at DESC LIMIT 100",[u.id]);send(res,req,200,q.rows);return;
+      const q=await pool.query("SELECT cs.id,cs.status,cs.started_at,cs.ended_at,c.code,c.title,se.term FROM class_sessions cs JOIN sections se ON se.id=cs.section_id JOIN courses c ON c.id=se.course_id WHERE se.instructor_id=$1 ORDER BY cs.started_at DESC LIMIT 100",[u.id]);send(res,req,200,{sessions:q.rows});return;
     }
 
     if(method==="GET"&&/^\/sessions\/[^/]+\/overview$/.test(path)){

@@ -77,4 +77,10 @@ jobs:
       - uses: github/codeql-action/init@v3
         with:
           languages: javascript-typescript
-      - uses: github/codeql-action/analyze@v3
+      - uses: github/codeql-action/analyze@v3\n
+  ios:
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build iOS app (unsigned)
+        run: xcodebuild -project ios/SHAHID.xcodeproj -scheme SHAHID -sdk iphonesimulator -configuration Debug -destination 'platform=iOS Simulator,name=iPhone 16' CODE_SIGNING_ALLOWED=NO build

@@ -173,6 +173,10 @@ export function getUserDevice(database: DatabaseSync, userId: string, deviceId: 
   return database.prepare("SELECT id, user_id FROM devices WHERE id = ? AND user_id = ?").get(deviceId, userId) as any;
 }
 
+export function getUserDevices(database: DatabaseSync, userId: string): Array<{ id: string; user_id: string }> {
+  return database.prepare("SELECT id, user_id FROM devices WHERE user_id = ? ORDER BY enrolled_at ASC").all(userId) as any;
+}
+
 export function ensureDevice(database: DatabaseSync, userId: string, hardwareAttestationId: string): string {
   const existing = database.prepare("SELECT id, user_id FROM devices WHERE hardware_attestation_id = ?").get(hardwareAttestationId) as { id: string; user_id: string } | undefined;
   if (existing) {
@@ -232,6 +236,11 @@ export function getPairStatsForDevice(database: DatabaseSync, deviceId: string):
 export function getEngagementScore(database: DatabaseSync, studentId: string, sessionId: string): number | null {
   const row = database.prepare("SELECT score FROM engagement_scores WHERE student_id = ? AND session_id = ?").get(studentId, sessionId) as { score: number } | undefined;
   return row?.score ?? null;
+}
+
+export function countRecentRiskAssessments(database: DatabaseSync, studentId: string, sinceIso: string): number {
+  const row = database.prepare("SELECT COUNT(*) AS cnt FROM risk_assessments WHERE student_id = ? AND computed_at >= ?").get(studentId, sinceIso) as { cnt: number };
+  return row.cnt;
 }
 
 export function getLivenessEvent(database: DatabaseSync, studentId: string, sessionId: string): { sentAt: string; answeredAt: string | null; passed: boolean } | null {

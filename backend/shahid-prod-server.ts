@@ -249,7 +249,9 @@ const server=createServer(async(req,res)=>{
       const attendance=(await pool.query<any>("SELECT proof_verified,device_id FROM attendance_records WHERE session_id=$1 AND student_id=$2",[sessionId,studentId])).rows[0];
       if(!attendance){send(res,req,404,{error:"attendance_not_found",requestId});return;}
       const witnesses=(await pool.query<any>("SELECT COUNT(DISTINCT observer.user_id)::int AS count FROM witness_observations w JOIN devices observer ON observer.id=w.observer_device_id JOIN devices observed ON observed.id=w.observed_device_id WHERE w.session_id=$1 AND w.observed_device_id=$2 AND observer.user_id<>observed.user_id",[sessionId,attendance.device_id])).rows[0].count;
-      const conflicts=(await pool.query<any>("SELECT COUNT(*)::int AS count FROM witness_observations w WHERE w.session_id=$1 AND w.observed_device_id=$2 AND w.rssi>-50",[sessionId,attendance.device_id])).rows[0].count;
+      // RSSI magnitude alone is not a contradiction signal; keep this zero until a calibrated
+      // contradiction model exists rather than inventing certainty from radio noise.
+      const conflicts=0;
       const replay=(await pool.query<any>("SELECT COUNT(*)::int AS count FROM audit_log WHERE actor_id=$1 AND action IN ('WITNESS_SIGNATURE_INVALID','DEVICE_SIGNATURE_INVALID') AND occurred_at > now()-interval '1 hour'",[studentId])).rows[0].count;
       const result=assessRisk({proofVerified:attendance.proof_verified,independentWitnesses:witnesses,conflictingObservations:conflicts,staleObservations:0,replayEvents:replay});
       await pool.query("INSERT INTO risk_assessments(id,session_id,student_id,risk_score,reasons,computed_at) VALUES($1,$2,$3,$4,$5,now()) ON CONFLICT(session_id,student_id) DO UPDATE SET risk_score=EXCLUDED.risk_score,reasons=EXCLUDED.reasons,computed_at=now()",[randomUUID(),sessionId,studentId,result.score,JSON.stringify({status:result.status,confidence:result.confidence,reasons:result.reasons})]);

@@ -77,7 +77,8 @@ jobs:
       - uses: github/codeql-action/init@v3
         with:
           languages: javascript-typescript
-      - uses: github/codeql-action/analyze@v3\n
+      - uses: github/codeql-action/analyze@v3
+
   ios:
     runs-on: macos-15
     steps:

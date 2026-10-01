@@ -1,0 +1,47 @@
+openapi: 3.0.3
+info:
+  title: SHAHID API
+  version: 1.0.0
+  description: Attendance integrity API using cryptographically verifiable device evidence.
+servers:
+  - url: http://localhost:8080
+paths:
+  /health:
+    get:
+      responses: {"200": {description: Healthy}}
+  /auth/register:
+    post:
+      responses: {"201": {description: Student created}}
+  /auth/login:
+    post:
+      responses: {"200": {description: Access token issued}}
+  /devices/enroll/challenge:
+    post:
+      security: [{bearerAuth: []}]
+      responses: {"200": {description: Enrollment challenge}}
+  /devices/enroll/complete:
+    post:
+      security: [{bearerAuth: []}]
+      responses: {"201": {description: Device enrolled}}
+  /devices/proof-challenge:
+    post:
+      security: [{bearerAuth: []}]
+      responses: {"200": {description: Device/session challenge}}
+  /sessions/{sessionId}/check-in:
+    post:
+      security: [{bearerAuth: []}]
+      responses: {"201": {description: Cryptographically verified check-in}}
+  /sessions/{sessionId}/witnesses:
+    post:
+      security: [{bearerAuth: []}]
+      responses: {"201": {description: Signed witness accepted}}
+  /sessions/{sessionId}/overview:
+    get:
+      security: [{bearerAuth: []}]
+      responses: {"200": {description: Professor evidence overview}}
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT

@@ -38,7 +38,21 @@ import {
   rotateRefreshToken,
   upsertRiskAssessment,
   writeAuditLog,
+  createDeviceChallenge,
+  getDeviceChallenge,
+  consumeDeviceChallenge,
+  enrollCryptographicDevice,
+  getCryptoDevice,
+  recordAttendanceProof,
+  getAttendanceProof,
 } from "./shahid-db";
+import {
+  canonicalProof,
+  isFreshIsoTimestamp,
+  keyFingerprint,
+  normalizePublicKey,
+  verifyDeviceSignature,
+} from "./shahid-device-crypto";
 import {
   CONFIG,
   decideEscalation,
@@ -376,10 +390,104 @@ export function createShahidServer(dbPath: string = ":memory:") {
         return;
       }
 
-      if (method === "POST" && path === "/devices/enroll") {
+      if (method === "POST" && path === "/devices/enroll/challenge") {
         const body = await readJsonBody(req);
-        // This is an enrollment identifier, not a claim of hardware-backed
-        // attestation. A native challenge-response layer is required for that.
+        if (!validString(body.publicKey, 4096) || !validString(body.keyId, 128)) {
+          finish(400, { error: "invalid_device_key", requestId: id });
+          return;
+        }
+        let publicKey: string;
+        try { publicKey = normalizePublicKey(body.publicKey); } catch {
+          finish(400, { error: "invalid_device_key", requestId: id });
+          return;
+        }
+        const challenge = createDeviceChallenge(db, {
+          userId: authed.sub,
+          publicKey,
+          keyId: body.keyId,
+          purpose: "device_enrollment",
+        });
+        finish(200, challenge);
+        return;
+      }
+
+      if (method === "POST" && path === "/devices/enroll/complete") {
+        const body = await readJsonBody(req);
+        if (!validString(body.challengeId, 100) || !validString(body.signature, 256)) {
+          finish(400, { error: "invalid_device_proof", requestId: id });
+          return;
+        }
+        const challenge = getDeviceChallenge(db, body.challengeId);
+        if (!challenge || challenge.user_id !== authed.sub || challenge.purpose !== "device_enrollment" ||
+            challenge.consumed_at || Date.parse(challenge.expires_at) <= Date.now()) {
+          finish(401, { error: "invalid_device_proof", requestId: id });
+          return;
+        }
+        const message = canonicalProof({
+          challengeId: challenge.id,
+          nonce: challenge.nonce,
+          purpose: challenge.purpose,
+          keyId: challenge.key_id,
+        });
+        if (!verifyDeviceSignature(challenge.public_key, message, body.signature)) {
+          writeAuditLog(db, { actorId: authed.sub, action: "DEVICE_SIGNATURE_INVALID", targetType: "device_challenge", targetId: challenge.id, reasonCode: "enrollment_signature_failed", metadata: { requestId: id } });
+          finish(401, { error: "invalid_device_proof", requestId: id });
+          return;
+        }
+        if (!consumeDeviceChallenge(db, challenge.id)) {
+          finish(409, { error: "challenge_replayed", requestId: id });
+          return;
+        }
+        try {
+          const deviceId = enrollCryptographicDevice(db, {
+            userId: authed.sub,
+            publicKey: challenge.public_key,
+            keyId: challenge.key_id,
+          });
+          finish(201, { deviceId, keyId: challenge.key_id, algorithm: "Ed25519" });
+        } catch {
+          finish(409, { error: "device_key_conflict", requestId: id });
+        }
+        return;
+      }
+
+      if (method === "POST" && path === "/devices/proof-challenge") {
+        const body = await readJsonBody(req);
+        if (!validString(body.deviceId, 100)) {
+          finish(400, { error: "invalid_device", requestId: id });
+          return;
+        }
+        const device = getUserDevice(db, authed.sub, body.deviceId);
+        const cryptoDevice = device ? getCryptoDevice(db, body.deviceId) : null;
+        if (!device || !cryptoDevice || cryptoDevice.status !== "active") {
+          finish(403, { error: "device_not_authorized", requestId: id });
+          return;
+        }
+        const sessionId = validString(body.sessionId, 100) ? body.sessionId : null;
+        if (sessionId) {
+          const session = getSessionById(db, sessionId);
+          if (!session || session.status !== "active") {
+            finish(404, { error: "session_not_found", requestId: id });
+            return;
+          }
+        }
+        const challenge = createDeviceChallenge(db, {
+          userId: authed.sub,
+          publicKey: cryptoDevice.public_key,
+          keyId: cryptoDevice.key_id,
+          purpose: sessionId ? "session_proof" : "device_proof",
+          sessionId,
+        });
+        finish(200, challenge);
+        return;
+      }
+
+      if (method === "POST" && path === "/devices/enroll") {
+        if (process.env.NODE_ENV !== "test") {
+          finish(410, { error: "legacy_device_enrollment_disabled", requestId: id });
+          return;
+        }
+        const body = await readJsonBody(req);
         if (!validString(body.deviceEnrollmentKey, 256)) {
           finish(400, { error: "invalid_device_enrollment", requestId: id });
           return;
@@ -387,6 +495,52 @@ export function createShahidServer(dbPath: string = ":memory:") {
         const deviceKeyHash = createHash("sha256").update(body.deviceEnrollmentKey, "utf8").digest("hex");
         const deviceId = ensureDevice(db, authed.sub, deviceKeyHash);
         finish(200, { deviceId });
+        return;
+      }
+
+      const checkinMatch = path.match(/^\/sessions\/([^/]+)\/check-in$/);
+      if (method === "POST" && checkinMatch) {
+        const sessionId = checkinMatch[1];
+        const session = getSessionById(db, sessionId);
+        if (!session || session.status !== "active") {
+          finish(404, { error: "session_not_found", requestId: id });
+          return;
+        }
+        const body = await readJsonBody(req);
+        if (!validString(body.deviceId, 100) || !validString(body.challengeId, 100) ||
+            !validString(body.signature, 256) || !isFreshIsoTimestamp(body.timestamp)) {
+          finish(400, { error: "invalid_check_in_proof", requestId: id });
+          return;
+        }
+        const device = getUserDevice(db, authed.sub, body.deviceId);
+        const cryptoDevice = device ? getCryptoDevice(db, body.deviceId) : null;
+        const challenge = getDeviceChallenge(db, body.challengeId);
+        if (!cryptoDevice || cryptoDevice.status !== "active" || !challenge ||
+            challenge.user_id !== authed.sub || challenge.session_id !== sessionId ||
+            challenge.purpose !== "session_proof" || challenge.consumed_at ||
+            Date.parse(challenge.expires_at) <= Date.now()) {
+          finish(401, { error: "invalid_check_in_proof", requestId: id });
+          return;
+        }
+        const message = canonicalProof({
+          challengeId: challenge.id,
+          nonce: challenge.nonce,
+          purpose: challenge.purpose,
+          sessionId,
+          deviceId: body.deviceId,
+          timestamp: body.timestamp as string,
+        });
+        if (!verifyDeviceSignature(cryptoDevice.public_key, message, body.signature)) {
+          writeAuditLog(db, { actorId: authed.sub, action: "DEVICE_SIGNATURE_INVALID", targetType: "session", targetId: sessionId, reasonCode: "check_in_signature_failed", metadata: { requestId: id, deviceId: body.deviceId } });
+          finish(401, { error: "invalid_check_in_proof", requestId: id });
+          return;
+        }
+        if (!consumeDeviceChallenge(db, challenge.id)) {
+          finish(409, { error: "challenge_replayed", requestId: id });
+          return;
+        }
+        recordAttendanceProof(db, { sessionId, studentId: authed.sub, deviceId: body.deviceId, proofVerified: true });
+        finish(201, { sessionId, deviceId: body.deviceId, status: "checked_in", proofVerified: true });
         return;
       }
 
@@ -412,6 +566,9 @@ export function createShahidServer(dbPath: string = ":memory:") {
         const observerDeviceId = String(req.headers["x-device-id"] ?? "");
         const observedDeviceId = body.observedDeviceId;
         const rssi = body.rssi;
+        const nonce = body.nonce;
+        const signature = body.signature;
+        const observationTimestamp = body.timestamp;
 
         if (!validString(observedDeviceId, 100) || typeof rssi !== "number" || !Number.isInteger(rssi) || rssi < -127 || rssi > 0) {
           finish(400, { error: "invalid_witness_observation", requestId: id });
@@ -441,8 +598,42 @@ export function createShahidServer(dbPath: string = ":memory:") {
           return;
         }
 
-        insertWitnessObservation(db, { sessionId, observerDeviceId, observedDeviceId, rssi });
-        finish(201, { recorded: true });
+        const observerCrypto = getCryptoDevice(db, observerDeviceId);
+        const requiresSignedEvidence = process.env.NODE_ENV !== "test";
+        if (requiresSignedEvidence) {
+          if (!observerCrypto || observerCrypto.status !== "active" || !validString(nonce, 256) ||
+              !validString(signature, 256) || !isFreshIsoTimestamp(observationTimestamp)) {
+            finish(400, { error: "signed_witness_required", requestId: id });
+            return;
+          }
+          const message = canonicalProof({
+            sessionId,
+            observerDeviceId,
+            observedDeviceId,
+            rssi,
+            timestamp: observationTimestamp as string,
+            nonce: nonce as string,
+            observationType: validString(body.observationType, 64) ? body.observationType as string : "ble_proximity",
+            protocolVersion: validString(body.protocolVersion, 32) ? body.protocolVersion as string : "1",
+          });
+          if (!verifyDeviceSignature(observerCrypto.public_key, message, signature as string)) {
+            writeAuditLog(db, { actorId: authed.sub, action: "WITNESS_SIGNATURE_INVALID", targetType: "session", targetId: sessionId, reasonCode: "invalid_observation_signature", metadata: { requestId: id, observerDeviceId, observedDeviceId } });
+            finish(401, { error: "invalid_witness_signature", requestId: id });
+            return;
+          }
+        }
+        try {
+          insertWitnessObservation(db, { sessionId, observerDeviceId, observedDeviceId, rssi,
+            nonce: validString(nonce, 256) ? nonce as string : null,
+            signature: validString(signature, 256) ? signature as string : null,
+            observationType: validString(body.observationType, 64) ? body.observationType as string : "ble_proximity",
+            protocolVersion: validString(body.protocolVersion, 32) ? body.protocolVersion as string : "1",
+            ephemeralId: validString(body.ephemeralId, 128) ? body.ephemeralId as string : null });
+        } catch {
+          finish(409, { error: "duplicate_witness_observation", requestId: id });
+          return;
+        }
+        finish(201, { recorded: true, signed: requiresSignedEvidence });
         return;
       }
 

@@ -1,22 +1,16 @@
-# Architecture
+# SHAHID Architecture
 
-Shahid separates administrative attendance from independent engagement verification.
+SHAHID has two persistence/runtime paths:
 
-## Runtime flow
+- backend/shahid-server.ts: deterministic SQLite prototype/test server.
+- backend/shahid-prod-server.ts: PostgreSQL + Redis production-oriented API.
 
-1. A professor starts a class session.
-2. Attendance is recorded through the administrative layer.
-3. Independent witness observations and engagement signals feed the smart layer.
-4. Risk scoring combines low engagement, suspicious pairing patterns, and missed liveness prompts.
-5. Scores at or above `0.60` can create an instructor-review flag, subject to the weekly escalation cap.
+Production trust boundary:
 
-## Core components
+Android/Browser -> HTTPS API -> authentication/authorization -> PostgreSQL evidence store.
 
-- `backend/shahid-server.ts` — HTTP API and authorization.
-- `backend/shahid-db.ts` — SQLite persistence used for the runnable prototype.
-- `backend/shahid-auth.ts` — password hashing and HS256 JWT primitives.
-- `backend/shahid-escalation-logic.ts` — quorum, pairing, risk scoring, and escalation logic.
-- `frontend/shahid-dashboard-redhat.jsx` — dashboard artifact.
-- `database/schema.sql` — PostgreSQL-oriented production schema.
+Device identity uses Ed25519 signatures. A challenge is bound to user, device/key, purpose and optionally session. Signed witness observations bind session, observer, observed device, timestamp, nonce and proximity metadata.
 
-The project explicitly does not claim that voluntary, sustained collusion can be defeated with certainty.
+The production API separates authentication, authorization, device identity, attendance, evidence and audit concerns at the route/service boundary. PostgreSQL enforces relational ownership and replay constraints; Redis provides distributed rate-limit state when configured.
+
+BLE is a noisy proximity signal. It is never treated as proof of physical human presence. Android background execution remains platform-controlled.

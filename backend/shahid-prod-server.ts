@@ -230,6 +230,15 @@ const server=createServer(async(req,res)=>{
       send(res,req,200,{sessionId:row.session_id,deviceId:attMatch[2],attendance:row.outcome,witnessCount:wc.rows[0].count,proofVerified:row.proof_verified});return;
     }
 
+    if(method==="POST"&&/^\/sessions\/[^/]+\/end$/.test(path)){
+      if(!requireRole(u,"professor","dept_admin","university_admin")){send(res,req,403,{error:"forbidden_role",requestId});return;}
+      const sessionId=path.split("/")[2];
+      const q=await pool.query<any>("UPDATE class_sessions cs SET status='ended',ended_at=now() FROM sections se WHERE cs.id=$1 AND cs.section_id=se.id AND se.instructor_id=$2 RETURNING cs.id,cs.status,cs.ended_at",[sessionId,u.id]);
+      if(!q.rowCount){send(res,req,404,{error:"session_not_found",requestId});return;}
+      await audit(u.id,"SESSION_ENDED","class_sessions",sessionId,"professor_action",{requestId});
+      send(res,req,200,q.rows[0]);return;
+    }
+
     if(method==="POST"&&/^\/sessions\/[^/]+$/.test(path)){
       if(!requireRole(u,"professor","dept_admin","university_admin")){send(res,req,403,{error:"forbidden_role",requestId});return;}
       const b=await body(req);const sectionId=String(b.sectionId??"");const s=await pool.query<any>("SELECT id,instructor_id FROM sections WHERE id=$1 AND instructor_id=$2",[sectionId,u.id]);
@@ -266,7 +275,7 @@ const server=createServer(async(req,res)=>{
       const sessionId=path.split("/")[2];const s=(await pool.query<any>("SELECT cs.id,cs.status,cs.started_at,cs.ended_at,se.instructor_id,c.code,c.title,se.term FROM class_sessions cs JOIN sections se ON se.id=cs.section_id JOIN courses c ON c.id=se.course_id WHERE cs.id=$1",[sessionId])).rows[0];
       if(!s){send(res,req,404,{error:"session_not_found",requestId});return;}
       if(s.instructor_id!==u.id){send(res,req,403,{error:"forbidden",requestId});return;}
-      const a=await pool.query("SELECT ar.student_id,u.full_name,u.email,ar.outcome,ar.proof_verified,ar.checked_in_at,COUNT(DISTINCT w.observer_device_id)::int AS witness_count FROM attendance_records ar JOIN users u ON u.id=ar.student_id LEFT JOIN witness_observations w ON w.session_id=ar.session_id AND w.observed_device_id=ar.device_id WHERE ar.session_id=$1 GROUP BY ar.student_id,u.full_name,u.email,ar.outcome,ar.proof_verified,ar.checked_in_at ORDER BY u.full_name",[sessionId]);
+      const a=await pool.query("SELECT ar.student_id,u.full_name,u.email,ar.outcome,ar.proof_verified,ar.checked_in_at,COUNT(DISTINCT w.observer_device_id)::int AS witness_count,ra.risk_score,ra.reasons AS risk_reasons FROM attendance_records ar JOIN users u ON u.id=ar.student_id LEFT JOIN witness_observations w ON w.session_id=ar.session_id AND w.observed_device_id=ar.device_id LEFT JOIN risk_assessments ra ON ra.session_id=ar.session_id AND ra.student_id=ar.student_id WHERE ar.session_id=$1 GROUP BY ar.student_id,u.full_name,u.email,ar.outcome,ar.proof_verified,ar.checked_in_at,ra.risk_score,ra.reasons ORDER BY u.full_name",[sessionId]);
       send(res,req,200,{session:s,students:a.rows});return;
     }
 
@@ -292,8 +301,9 @@ const server=createServer(async(req,res)=>{
       // RSSI magnitude alone is not a contradiction signal; keep this zero until a calibrated
       // contradiction model exists rather than inventing certainty from radio noise.
       const conflicts=0;
-      const replay=(await pool.query<any>("SELECT COUNT(*)::int AS count FROM audit_log WHERE actor_id=$1 AND action IN ('WITNESS_SIGNATURE_INVALID','DEVICE_SIGNATURE_INVALID') AND occurred_at > now()-interval '1 hour'",[studentId])).rows[0].count;
-      const result=assessRisk({proofVerified:attendance.proof_verified,independentWitnesses:witnesses,conflictingObservations:conflicts,staleObservations:0,replayEvents:replay});
+      const replay=(await pool.query<any>("SELECT COUNT(*)::int AS count FROM audit_log WHERE target_table='class_session' AND target_id=$1 AND action IN ('WITNESS_SIGNATURE_INVALID','DEVICE_SIGNATURE_INVALID','HEARTBEAT_SIGNATURE_INVALID') AND occurred_at > now()-interval '1 hour'",[sessionId])).rows[0].count;
+      const stale=(await pool.query<any>("SELECT CASE WHEN EXISTS(SELECT 1 FROM evidence_heartbeats WHERE session_id=$1 AND device_id=$2 AND observed_at>now()-interval '90 seconds') THEN 0 ELSE 1 END::int AS count",[sessionId,attendance.device_id])).rows[0].count;
+      const result=assessRisk({proofVerified:attendance.proof_verified,independentWitnesses:witnesses,conflictingObservations:conflicts,staleObservations:stale,replayEvents:replay});
       await pool.query("INSERT INTO risk_assessments(id,session_id,student_id,risk_score,reasons,computed_at) VALUES($1,$2,$3,$4,$5,now()) ON CONFLICT(session_id,student_id) DO UPDATE SET risk_score=EXCLUDED.risk_score,reasons=EXCLUDED.reasons,computed_at=now()",[randomUUID(),sessionId,studentId,result.score,JSON.stringify({status:result.status,confidence:result.confidence,reasons:result.reasons})]);
       send(res,req,200,{sessionId,studentId,...result});return;
     }

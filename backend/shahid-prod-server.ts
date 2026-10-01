@@ -14,7 +14,7 @@ import { canonicalProof, isFreshIsoTimestamp, keyFingerprint, normalizePublicKey
 
 const PORT = Number(process.env.PORT ?? 8080);
 const DATABASE_URL = process.env.DATABASE_URL;
-const JWT_SECRET = process.env.SHAHID_JWT_SECRET;
+const JWT_SECRET = process.env.SHAHID_JWT_SECRET ?? "";
 if (!DATABASE_URL) throw new Error("DATABASE_URL is required");
 if (!JWT_SECRET) throw new Error("SHAHID_JWT_SECRET is required");
 
@@ -71,7 +71,7 @@ async function limited(key:string,max:number,windowSec=60){
   if(redis?.isReady){const k=`rl:${key}`;const n=await redis.incr(k);if(n===1)await redis.expire(k,windowSec);return n>max;}
   return false;
 }
-function failCode(e:unknown){const m=e instanceof Error?e.message:"";if(m==="payload_too_large")return[413,"payload_too_large"];if(m==="unsupported_media_type")return[415,m];if(m==="invalid_json_body")return[400,m];return[500,"internal_error"];}
+function failCode(e:unknown):[number,string]{const m=e instanceof Error?e.message:"";if(m==="payload_too_large")return[413,"payload_too_large"];if(m==="unsupported_media_type")return[415,m];if(m==="invalid_json_body")return[400,m];return[500,"internal_error"];}
 async function audit(actorId:string|null,action:string,targetTable:string,targetId:string,reason:string,metadata={}) {
   await pool.query("INSERT INTO audit_log(university_id,actor_id,action,target_table,target_id,reason_code,metadata) VALUES((SELECT university_id FROM users WHERE id=$1),$1,$2,$3,$4,$5,$6)",[actorId,action,targetTable,targetId,reason,metadata]);
 }

@@ -11,6 +11,7 @@ const BASE = `http://localhost:${PORT}`;
 const PASSWORD = "Correct-Horse-123!";
 
 before(async () => {
+  process.env.NODE_ENV = "test";
   process.env.SHAHID_ALLOWED_ORIGINS = "http://localhost:5173";
   server = createShahidServer(":memory:");
   await new Promise<void>((resolve) => server.listen(PORT, resolve));

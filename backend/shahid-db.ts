@@ -37,7 +37,7 @@ function migrate(database: DatabaseSync): void {
     CREATE TABLE IF NOT EXISTS devices (
       id TEXT PRIMARY KEY,
       user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-      hardware_attestation_id TEXT NOT NULL UNIQUE,
+      device_enrollment_key_hash TEXT NOT NULL UNIQUE,
       enrolled_at TEXT NOT NULL
     );
 
@@ -165,8 +165,8 @@ export function countIndependentWitnesses(database: DatabaseSync, sessionId: str
   return row.cnt;
 }
 
-export function getDevice(database: DatabaseSync, deviceId: string): { id: string; user_id: string; hardware_attestation_id: string } | undefined {
-  return database.prepare("SELECT id, user_id, hardware_attestation_id FROM devices WHERE id = ?").get(deviceId) as any;
+export function getDevice(database: DatabaseSync, deviceId: string): { id: string; user_id: string; device_enrollment_key_hash: string } | undefined {
+  return database.prepare("SELECT id, user_id, device_enrollment_key_hash FROM devices WHERE id = ?").get(deviceId) as any;
 }
 
 export function getUserDevice(database: DatabaseSync, userId: string, deviceId: string): { id: string; user_id: string } | undefined {
@@ -177,15 +177,15 @@ export function getUserDevices(database: DatabaseSync, userId: string): Array<{ 
   return database.prepare("SELECT id, user_id FROM devices WHERE user_id = ? ORDER BY enrolled_at ASC").all(userId) as any;
 }
 
-export function ensureDevice(database: DatabaseSync, userId: string, hardwareAttestationId: string): string {
-  const existing = database.prepare("SELECT id, user_id FROM devices WHERE hardware_attestation_id = ?").get(hardwareAttestationId) as { id: string; user_id: string } | undefined;
+export function ensureDevice(database: DatabaseSync, userId: string, deviceEnrollmentKeyHash: string): string {
+  const existing = database.prepare("SELECT id, user_id FROM devices WHERE device_enrollment_key_hash = ?").get(hardwareAttestationId) as { id: string; user_id: string } | undefined;
   if (existing) {
     if (existing.user_id !== userId) throw new Error("device_attestation_already_enrolled");
     return existing.id;
   }
   const id = randomUUID();
   database.prepare(`
-    INSERT INTO devices (id, user_id, hardware_attestation_id, enrolled_at)
+    INSERT INTO devices (id, user_id, device_enrollment_key_hash, enrolled_at)
     VALUES (?, ?, ?, ?)
   `).run(id, userId, hardwareAttestationId, new Date().toISOString());
   return id;

@@ -10,7 +10,7 @@ import androidx.appcompat.app.AppCompatActivity
 class MainActivity:AppCompatActivity(){
  private val identity=CryptoIdentity()
  override fun onCreate(savedInstanceState:Bundle?){super.onCreate(savedInstanceState)
-   val layout=LinearLayout(this).apply{orientation=LinearLayout.VERTICAL;padding=32}
+   val layout=LinearLayout(this).apply{orientation=LinearLayout.VERTICAL;setPadding(32,32,32,32)}
    val title=TextView(this).apply{text="SHAHID";textSize=30f}
    val subtitle=TextView(this).apply{text="Attendance Integrity";textSize=16f}
    val identityButton=Button(this).apply{text="Create / inspect device identity"}

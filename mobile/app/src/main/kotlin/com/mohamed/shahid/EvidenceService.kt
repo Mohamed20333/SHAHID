@@ -35,14 +35,10 @@ class EvidenceService:Service(){
       executor.execute{
         try{
           val challenge=api.witnessChallenge(t,s,d)
-          val observedIdentity=observedEphemeral
-          // The server resolves the ephemeral identifier to the session-scoped device ID.
-          // The signed payload therefore uses the server-issued device identity, not a MAC address.
-          val resolved=api.resolveEphemeral(t,s,observedIdentity)
           val nonce=challenge.getString("nonce")
           val ts=signer.now()
-          val signature=signer.signWitness(s,d,resolved,rssi,nonce,ts)
-          api.witness(t,s,d,rssi,challenge.getString("id"),signature,ts,observedIdentity)
+          val signature=signer.signWitness(s,d,observedEphemeral,rssi,nonce,ts)
+          api.witness(t,s,d,rssi,challenge.getString("id"),signature,ts,observedEphemeral)
         }catch(_:Exception){}
       }
     }

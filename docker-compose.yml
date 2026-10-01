@@ -43,14 +43,14 @@ services:
     depends_on:
       postgres: {condition: service_healthy}
       redis: {condition: service_healthy}
-    ports: ["127.0.0.1:8080:8080"]
+    ports: ["${SHAHID_BIND_HOST:-127.0.0.1}:8080:8080"]
 
   web:
     build:
       context: ./frontend
       dockerfile: Dockerfile
     restart: unless-stopped
-    ports: ["127.0.0.1:8081:80"]
+    ports: ["${SHAHID_BIND_HOST:-127.0.0.1}:8081:80"]
     depends_on: [api]
 
 volumes:

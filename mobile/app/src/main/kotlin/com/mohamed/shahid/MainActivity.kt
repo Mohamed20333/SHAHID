@@ -53,7 +53,7 @@ class MainActivity:AppCompatActivity(){
 
  private fun refreshSessions(){
   val token=prefs.getString("token",null)?:return
-  runAsync{try{val arr=api.studentSessions(token);runOnUiThread{renderSessions(arr)}}catch(e:Exception){showError(e)}}
+  runAsync{try{val arr=api.studentSessions(token).getJSONArray("sessions");runOnUiThread{renderSessions(arr)}}catch(e:Exception){showError(e)}}
  }
 
  private fun renderSessions(arr:JSONArray){

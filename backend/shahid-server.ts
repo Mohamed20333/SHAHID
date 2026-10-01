@@ -425,8 +425,13 @@ export function createShahidServer(dbPath: string = ":memory:") {
           finish(400, { error: "device_cannot_witness_itself", requestId: id });
           return;
         }
-        if (!getDevice(db, observedDeviceId)) {
+        const observedDevice = getDevice(db, observedDeviceId);
+        if (!observedDevice) {
           finish(404, { error: "observed_device_not_found", requestId: id });
+          return;
+        }
+        if (observedDevice.user_id === authed.sub) {
+          finish(403, { error: "self_witness_forbidden", requestId: id });
           return;
         }
 

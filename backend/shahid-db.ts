@@ -55,6 +55,11 @@ function migrate(database: DatabaseSync): void {
       observed_device_id TEXT NOT NULL REFERENCES devices(id),
       rssi INTEGER NOT NULL CHECK (rssi BETWEEN -127 AND 0),
       observed_at TEXT NOT NULL,
+      nonce TEXT UNIQUE,
+      signature TEXT,
+      observation_type TEXT NOT NULL DEFAULT 'ble_proximity',
+      protocol_version TEXT NOT NULL DEFAULT '1',
+      ephemeral_id TEXT,
       CHECK (observer_device_id <> observed_device_id)
     );
 
@@ -109,6 +114,16 @@ function migrate(database: DatabaseSync): void {
     CREATE INDEX IF NOT EXISTS idx_refresh_user ON refresh_tokens(user_id);
     CREATE INDEX IF NOT EXISTS idx_refresh_family ON refresh_tokens(family_id);
     CREATE INDEX IF NOT EXISTS idx_witness_session_observed ON witness_observations(session_id, observed_device_id);
+
+    CREATE TABLE IF NOT EXISTS attendance_records (
+      id TEXT PRIMARY KEY,
+      session_id TEXT NOT NULL REFERENCES class_sessions(id) ON DELETE CASCADE,
+      student_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      device_id TEXT NOT NULL REFERENCES devices(id) ON DELETE RESTRICT,
+      checked_in_at TEXT NOT NULL,
+      proof_verified INTEGER NOT NULL CHECK(proof_verified IN (0,1)),
+      UNIQUE(session_id, student_id)
+    );
 
     CREATE TABLE IF NOT EXISTS audit_log (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -271,12 +286,34 @@ export function getSessionById(database: DatabaseSync, sessionId: string): { id:
   return database.prepare("SELECT id, instructor_id, started_at, status FROM class_sessions WHERE id = ?").get(sessionId) as any;
 }
 
-export function insertWitnessObservation(database: DatabaseSync, params: { sessionId: string; observerDeviceId: string; observedDeviceId: string; rssi: number }): void {
+export function insertWitnessObservation(database: DatabaseSync, params: {
+  sessionId: string; observerDeviceId: string; observedDeviceId: string; rssi: number;
+  nonce?: string | null; signature?: string | null; observationType?: string; protocolVersion?: string; ephemeralId?: string | null;
+}): void {
   database.prepare(`
     INSERT INTO witness_observations
-      (session_id, observer_device_id, observed_device_id, rssi, observed_at)
-    VALUES (?, ?, ?, ?, ?)
-  `).run(params.sessionId, params.observerDeviceId, params.observedDeviceId, params.rssi, new Date().toISOString());
+      (session_id, observer_device_id, observed_device_id, rssi, observed_at, nonce, signature, observation_type, protocol_version, ephemeral_id)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+  `).run(params.sessionId, params.observerDeviceId, params.observedDeviceId, params.rssi, new Date().toISOString(),
+    params.nonce ?? null, params.signature ?? null, params.observationType ?? "ble_proximity",
+    params.protocolVersion ?? "1", params.ephemeralId ?? null);
+}
+
+export function recordAttendanceProof(database: DatabaseSync, params: {
+  sessionId: string; studentId: string; deviceId: string; proofVerified: boolean;
+}): void {
+  database.prepare(`
+    INSERT INTO attendance_records (id,session_id,student_id,device_id,checked_in_at,proof_verified)
+    VALUES (?,?,?,?,?,?)
+    ON CONFLICT(session_id,student_id) DO UPDATE SET
+      device_id=excluded.device_id,
+      checked_in_at=excluded.checked_in_at,
+      proof_verified=excluded.proof_verified
+  `).run(randomUUID(), params.sessionId, params.studentId, params.deviceId, new Date().toISOString(), params.proofVerified ? 1 : 0);
+}
+
+export function getAttendanceProof(database: DatabaseSync, sessionId: string, studentId: string) {
+  return database.prepare("SELECT * FROM attendance_records WHERE session_id=? AND student_id=?").get(sessionId, studentId) as any;
 }
 
 export function countIndependentWitnesses(database: DatabaseSync, sessionId: string, observedDeviceId: string): number {

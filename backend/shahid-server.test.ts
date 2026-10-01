@@ -209,6 +209,19 @@ test("risk calculation ignores client-supplied evidence and reads server-owned e
   const secondDevice = await enroll(student.accessToken, "risk-device-2");
   const sessionId = await createSession(prof.accessToken);
 
+  for (let i = 1; i <= 4; i++) {
+    const email = `risk-observer-${i}@test.com`;
+    await registerStudent(email);
+    const observer = await login(email);
+    const observerDevice = await enroll(observer.accessToken, `risk-observer-device-${i}`);
+    const witness = await fetch(`${BASE}/sessions/${sessionId}/witnesses`, {
+      method: "POST",
+      headers: auth(observer.accessToken, observerDevice),
+      body: JSON.stringify({ observedDeviceId: device, rssi: -60 }),
+    });
+    assert.equal(witness.status, 201);
+  }
+
   const db = getDb();
   db.prepare(`INSERT INTO pair_stats (device_a_id, device_b_id, sessions_observed, co_occurrence_rate, variance_score)
               VALUES (?, ?, ?, ?, ?)`).run(device, secondDevice, 22, 0.97, 0.05);

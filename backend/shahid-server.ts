@@ -528,7 +528,7 @@ export function createShahidServer(dbPath: string = ":memory:") {
           purpose: challenge.purpose,
           sessionId,
           deviceId: body.deviceId,
-          timestamp: body.timestamp,
+          timestamp: body.timestamp as string,
         });
         if (!verifyDeviceSignature(cryptoDevice.public_key, message, body.signature)) {
           writeAuditLog(db, { actorId: authed.sub, action: "DEVICE_SIGNATURE_INVALID", targetType: "session", targetId: sessionId, reasonCode: "check_in_signature_failed", metadata: { requestId: id, deviceId: body.deviceId } });

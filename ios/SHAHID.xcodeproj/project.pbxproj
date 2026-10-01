@@ -1,0 +1,58 @@
+// !$*UTF8*$!
+{
+ archiveVersion = 1;
+ classes = {};
+ objectVersion = 56;
+ objects = {
+
+/* Begin PBXBuildFile section */
+ 100000000000000000000001 = {isa = PBXBuildFile; fileRef = 100000000000000000000101; };
+ 100000000000000000000002 = {isa = PBXBuildFile; fileRef = 100000000000000000000102; };
+/* End PBXBuildFile section */
+
+/* Begin PBXFileReference section */
+ 100000000000000000000101 = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SHaHIDApp.swift; sourceTree = "<group>"; };
+ 100000000000000000000102 = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Support.swift; sourceTree = "<group>"; };
+ 100000000000000000000103 = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>"; };
+ 100000000000000000000104 = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = SHAHID.app; sourceTree = BUILT_PRODUCTS_DIR; };
+/* End PBXFileReference section */
+
+/* Begin PBXFrameworksBuildPhase section */
+ 100000000000000000000201 = {isa = PBXFrameworksBuildPhase; buildActionMask = 2147483647; files = (); runOnlyForDeploymentPostprocessing = 0; };
+/* End PBXFrameworksBuildPhase section */
+
+/* Begin PBXGroup section */
+ 100000000000000000000301 = {isa = PBXGroup; children = (100000000000000000000101,100000000000000000000102,100000000000000000000103); path = SHAHID; sourceTree = "<group>"; };
+ 100000000000000000000302 = {isa = PBXGroup; children = (100000000000000000000301); name = ios; sourceTree = "<group>"; };
+ 100000000000000000000303 = {isa = PBXGroup; children = (100000000000000000000104); name = Products; sourceTree = "<group>"; };
+ 100000000000000000000304 = {isa = PBXGroup; children = (100000000000000000000302,100000000000000000000303); sourceTree = "<group>"; };
+/* End PBXGroup section */
+
+/* Begin PBXNativeTarget section */
+ 100000000000000000000401 = {isa = PBXNativeTarget; buildConfigurationList = 100000000000000000000501; buildPhases = (100000000000000000000601,100000000000000000000201,100000000000000000000602); buildRules = (); dependencies = (); name = SHAHID; productName = SHAHID; productReference = 100000000000000000000104; productType = "com.apple.product-type.application"; };
+/* End PBXNativeTarget section */
+
+/* Begin PBXProject section */
+ 100000000000000000000402 = {isa = PBXProject; attributes = {LastUpgradeCheck = 1600; TargetAttributes = {100000000000000000000401 = {CreatedOnToolsVersion = 16.0;};};}; buildConfigurationList = 100000000000000000000502; compatibilityVersion = "Xcode 14.0"; developmentRegion = en; hasScannedForEncodings = 0; knownRegions = (en); mainGroup = 100000000000000000000304; productRefGroup = 100000000000000000000303; projectDirPath = ""; projectRoot = ""; targets = (100000000000000000000401); };
+/* End PBXProject section */
+
+/* Begin PBXResourcesBuildPhase section */
+ 100000000000000000000602 = {isa = PBXResourcesBuildPhase; buildActionMask = 2147483647; files = (); runOnlyForDeploymentPostprocessing = 0; };
+/* End PBXResourcesBuildPhase section */
+
+/* Begin PBXSourcesBuildPhase section */
+ 100000000000000000000601 = {isa = PBXSourcesBuildPhase; buildActionMask = 2147483647; files = (100000000000000000000001,100000000000000000000002); runOnlyForDeploymentPostprocessing = 0; };
+/* End PBXSourcesBuildPhase section */
+
+/* Begin XCBuildConfiguration section */
+ 100000000000000000000701 = {isa = XCBuildConfiguration; buildSettings = {ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon; CODE_SIGNING_ALLOWED = NO; GENERATE_INFOPLIST_FILE = NO; INFOPLIST_FILE = SHAHID/Info.plist; IPHONEOS_DEPLOYMENT_TARGET = 16.0; PRODUCT_BUNDLE_IDENTIFIER = com.mohamed.shahid; PRODUCT_NAME = "$(TARGET_NAME)"; SUPPORTED_PLATFORMS = "iphoneos iphonesimulator"; SWIFT_VERSION = 5.0; TARGETED_DEVICE_FAMILY = "1,2";}; name = Debug; };
+ 100000000000000000000702 = {isa = XCBuildConfiguration; buildSettings = {ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon; CODE_SIGNING_ALLOWED = NO; GENERATE_INFOPLIST_FILE = NO; INFOPLIST_FILE = SHAHID/Info.plist; IPHONEOS_DEPLOYMENT_TARGET = 16.0; PRODUCT_BUNDLE_IDENTIFIER = com.mohamed.shahid; PRODUCT_NAME = "$(TARGET_NAME)"; SWIFT_VERSION = 5.0; TARGETED_DEVICE_FAMILY = "1,2";}; name = Release; };
+/* End XCBuildConfiguration section */
+
+/* Begin XCConfigurationList section */
+ 100000000000000000000501 = {isa = XCConfigurationList; buildConfigurations = (100000000000000000000701,100000000000000000000702); defaultConfigurationIsVisible = 0; defaultConfigurationName = Release; };
+ 100000000000000000000502 = {isa = XCConfigurationList; buildConfigurations = (100000000000000000000701,100000000000000000000702); defaultConfigurationIsVisible = 0; defaultConfigurationName = Release; };
+/* End XCConfigurationList section */
+ };
+ rootObject = 100000000000000000000402;
+}

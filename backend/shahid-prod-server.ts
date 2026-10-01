@@ -295,6 +295,33 @@ const server=createServer(async(req,res)=>{
       const q=await pool.query("SELECT cs.id,cs.status,cs.started_at,c.code,c.title,se.term,EXISTS(SELECT 1 FROM attendance_records ar WHERE ar.session_id=cs.id AND ar.student_id=$1) AS checked_in FROM class_sessions cs JOIN sections se ON se.id=cs.section_id JOIN courses c ON c.id=se.course_id JOIN enrollments e ON e.section_id=se.id WHERE e.student_id=$1 AND cs.status='active' ORDER BY cs.started_at DESC",[u.id]);send(res,req,200,q.rows);return;
     }
 
+    if(method==="GET"&&path==="/professor/courses"){
+      if(!requireRole(u,"professor","dept_admin","university_admin")){send(res,req,403,{error:"forbidden_role",requestId});return;}
+      const q=await pool.query("SELECT id,code,title FROM courses WHERE university_id=(SELECT university_id FROM users WHERE id=$1) ORDER BY code",[u.id]);
+      send(res,req,200,{courses:q.rows});return;
+    }
+    if(method==="GET"&&path==="/professor/sections"){
+      if(!requireRole(u,"professor","dept_admin","university_admin")){send(res,req,403,{error:"forbidden_role",requestId});return;}
+      const q=await pool.query("SELECT se.id,se.term,c.id AS course_id,c.code,c.title,(SELECT count(*)::int FROM enrollments e WHERE e.section_id=se.id) AS enrolled_count FROM sections se JOIN courses c ON c.id=se.course_id WHERE se.instructor_id=$1 ORDER BY c.code,se.term",[u.id]);
+      send(res,req,200,{sections:q.rows});return;
+    }
+    if(method==="GET"&&path==="/admin/users"){
+      if(!requireRole(u,"dept_admin","university_admin","platform_admin")){send(res,req,403,{error:"forbidden_role",requestId});return;}
+      const q=await pool.query("SELECT id,role,full_name,email,created_at FROM users WHERE university_id=(SELECT university_id FROM users WHERE id=$1) ORDER BY created_at DESC LIMIT 500",[u.id]);
+      send(res,req,200,{users:q.rows});return;
+    }
+    if(method==="GET"&&path==="/admin/overview"){
+      if(!requireRole(u,"dept_admin","university_admin","platform_admin")){send(res,req,403,{error:"forbidden_role",requestId});return;}
+      const [users,devices,sessions,risks,audits]=await Promise.all([
+        pool.query("SELECT role,count(*)::int AS count FROM users WHERE university_id=(SELECT university_id FROM users WHERE id=$1) GROUP BY role",[u.id]),
+        pool.query("SELECT status,count(*)::int AS count FROM devices WHERE user_id IN (SELECT id FROM users WHERE university_id=(SELECT university_id FROM users WHERE id=$1)) GROUP BY status",[u.id]),
+        pool.query("SELECT count(*)::int AS count FROM class_sessions cs JOIN sections se ON se.id=cs.section_id WHERE se.instructor_id IN (SELECT id FROM users WHERE university_id=(SELECT university_id FROM users WHERE id=$1))",[u.id]),
+        pool.query("SELECT count(*)::int AS count FROM risk_assessments ra JOIN class_sessions cs ON cs.id=ra.session_id JOIN sections se ON se.id=cs.section_id WHERE se.instructor_id IN (SELECT id FROM users WHERE university_id=(SELECT university_id FROM users WHERE id=$1))",[u.id]),
+        pool.query("SELECT id,actor_id,action,target_table,target_id,reason_code,metadata,created_at FROM audit_log WHERE university_id=(SELECT university_id FROM users WHERE id=$1) ORDER BY created_at DESC LIMIT 100",[u.id])
+      ]);
+      send(res,req,200,{users:users.rows,devices:devices.rows,sessions:sessions.rows[0]?.count??0,riskAssessments:risks.rows[0]?.count??0,audit:audits.rows});return;
+    }
+
     if(method==="POST"&&/^\/admin\/devices\/[^/]+\/revoke$/.test(path)){
       if(!requireRole(u,"dept_admin","university_admin","platform_admin")){send(res,req,403,{error:"forbidden_role",requestId});return;}
       const deviceId=path.split("/")[3];const q=await pool.query("UPDATE devices SET status='revoked' WHERE id=$1 AND user_id IN (SELECT id FROM users WHERE university_id=(SELECT university_id FROM users WHERE id=$2)) RETURNING id",[deviceId,u.id]);

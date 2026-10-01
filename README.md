@@ -1,168 +1,118 @@
-# SHAHID — Attendance Verification & Academic-Integrity Intelligence
+# SHAHID — Attendance Integrity & Evidence Platform
 
-> CN3030 Term Project · University of East London · Red Hat Edition
+SHAHID is an evidence-first university attendance-integrity platform. It combines authenticated attendance, cryptographic device proof, session-scoped BLE proximity observations, signed witnesses, continuity heartbeats, an explainable risk engine, and professor/admin control surfaces.
 
-SHAHID is an academic prototype designed around one practical question:
+## Current system
 
-**How can an attendance system make proxy attendance visible without pretending that manual attendance itself is unforgeable?**
+- **Android student app:** native Kotlin workflow for login, device enrollment, cryptographic check-in, BLE advertising/scanning, signed witnesses and heartbeats.
+- **iOS/iPhone student app:** native SwiftUI/CoreBluetooth workflow with Keychain-backed Ed25519 identity, enrollment, check-in and BLE evidence.
+- **Professor web control center:** live session monitoring, attendance/evidence states and session-scoped evidence graph.
+- **Admin/security control center:** scoped user, device, session, risk and audit visibility.
+- **Backend:** PostgreSQL + Redis capable production-oriented API with authentication, RBAC, challenge-response, evidence verification and audit logging.
+- **Security:** scrypt passwords, short-lived access JWTs, rotating opaque refresh tokens, explicit CORS, request limits, replay protection and CodeQL/automated regression tests.
+- **Deployment:** Docker Compose for PostgreSQL, Redis, API and web, with configurable LAN binding for a trusted pilot network.
+- **Documentation:** architecture, deployment, privacy, threat model, mobile and pilot guidance.
 
-The design keeps attendance as an administrative signal and adds an independent smart layer based on engagement and behavioural evidence. A risk flag is a signal for instructor review — **not an automatic penalty or verdict**.
+## Evidence model
 
-## Security posture
-
-SHAHID treats the client as untrusted. Security-sensitive decisions are based on server-owned evidence rather than client-supplied risk values.
-
-### Hardened controls
-
-- Public registration creates students only; privileged roles cannot be self-assigned.
-- Passwords use salted, memory-hard scrypt with an explicit work factor.
-- Access JWTs are short-lived and validate algorithm, token type, issuer, audience, expiry, issue time, and token ID.
-- Refresh credentials are opaque random tokens stored only as SHA-256 hashes.
-- Refresh tokens rotate on use; replay of a revoked token revokes the token family.
-- Witness submissions cannot nominate an arbitrary observer device; the observer must belong to the authenticated account.
-- Risk calculation loads evidence from server-side persistence and ignores forged client-side evidence.
-- JSON request bodies are capped at 64 KiB.
-- Authentication has stricter rate limiting.
-- CORS uses an explicit origin allowlist rather than a wildcard.
-- Sensitive responses use no-store caching and generic client-facing errors.
-- CI performs type checking, adversarial regression tests, dependency auditing, and CodeQL analysis.
-
-### Security limitations that are intentionally not hidden
-
-The current device enrollment value is hashed, but it is not hardware-backed attestation. Production mobile integration should use hardware-backed keys and challenge-response proof. RSSI is also an environmental radio measurement, not cryptographic proof of physical proximity.
-
-See [docs/security/threat-model.md](docs/security/threat-model.md) for the threat model, trust boundaries, residual risks, and security test strategy.
-
-## Project contents
-
-```text
-SHAHID/
-├── backend/
-│   ├── shahid-server.ts
-│   ├── shahid-auth.ts
-│   ├── shahid-db.ts
-│   ├── shahid-escalation-logic.ts
-│   ├── shahid-server.test.ts
-│   └── shahid-demo.ts
-├── frontend/
-│   └── shahid-dashboard-redhat.jsx
-├── database/
-│   └── schema.sql
-├── docs/
-│   ├── architecture.md
-│   ├── shahid-presentation-2.pptx
-│   └── shahid-technical-report.docx
-├── .github/workflows/ci.yml
-├── .env.example
-├── docker-compose.yml
-├── package.json
-├── tsconfig.json
-├── SECURITY.md
-├── CONTRIBUTING.md
-├── LICENSE
-└── README.md
+```
+Student device
+   │
+   ├── cryptographic check-in
+   │
+   └── session-scoped BLE ephemeral identifier
+             │
+             ▼
+      Nearby participant
+             │
+             ├── RSSI observation
+             ├── server witness challenge
+             └── Ed25519 signature
+                       │
+                       ▼
+                 Evidence store
+                       │
+                 ┌─────┴─────┐
+                 ▼           ▼
+            Evidence       Risk
+              Graph       Assessment
 ```
 
-## Key design decision
+BLE is **not** treated as proof of physical presence. Cryptographic signatures prove control of an enrolled key; BLE provides environmental proximity evidence; the risk engine evaluates the evidence and can require human review.
 
-The project considered automatic capture (QR, ID/RFID, face recognition) versus manual attendance plus smart analytics. The selected design deliberately avoids making biometrics the default path and instead evaluates independent engagement signals.
-
-The technical report documents the trade-off and limitations in detail.
-
-## Risk model
-
-The implemented weights are:
-
-| Signal | Weight |
-|---|---:|
-| Low engagement despite marked present | +0.35 |
-| Statistically suspicious pairing | +0.40 |
-| Missed randomized live-check prompt | +0.25 |
-| Escalation threshold | 0.60 |
-
-Escalations are rate-limited to at most one per student per rolling week.
-
-## Requirements
-
-- Node.js 22+
-- npm
-- Docker Desktop / Docker Engine (optional, for PostgreSQL)
-
-## Local setup
+## Run locally
 
 ```bash
-git clone https://github.com/YOUR_USERNAME/SHAHID.git
-cd SHAHID
 npm install
 cp .env.example .env
-```
-
-Set a local `SHAHID_JWT_SECRET` in `.env`.
-
-### Run the automated suite
-
-```bash
+npm run typecheck
 npm test
 ```
 
-The suite starts the real HTTP server against an in-memory SQLite database and verifies authentication, authorization, attendance logic, risk escalation, weekly caps, and JWT integrity.
-
-### Typecheck + test
-
-```bash
-npm run check
-```
-
-### Run the logic demonstration
-
-```bash
-npm run demo
-```
-
-### Run the server
-
-```bash
-npm start
-```
-
-By default the server listens on port `3000`.
-
-For persistent local SQLite storage:
-
-```bash
-SHAHID_DB_PATH=./data/shahid.db npm start
-```
-
-## PostgreSQL development database
-
-The supplied Compose configuration initializes the PostgreSQL schema:
+For the PostgreSQL/Redis stack:
 
 ```bash
 docker compose up -d
+npm run db:migrate
 ```
 
-The application prototype currently uses Node's built-in SQLite implementation for its runnable local test path. PostgreSQL is the intended production persistence target.
+For an isolated pilot dataset:
 
-## Security notes
+```bash
+ALLOW_DEMO_SEED=true SHAHID_SEED_PASSWORD='use-a-local-password-12+' npm run seed:pilot
+```
 
-- Do not commit `.env` or database files.
-- Production must set `SHAHID_JWT_SECRET`.
-- Passwords use `scrypt`.
-- JWT verification is HS256-only.
-- Professor dashboards enforce ownership authorization.
-- The prototype does not store biometric images.
-- Risk flags are for human review and are not automatic disciplinary decisions.
+Never use pilot credentials or demo seed data in a real university deployment.
 
-See [`SECURITY.md`](SECURITY.md) and the technical report in `docs/`.
+## LAN pilot
 
-## Honest limitations
+For physical phones on the same trusted network:
 
-This is a term-project prototype, not a production attendance platform. It does not claim to eliminate fully voluntary, sustained collusion with certainty. Hardware/BLE integration, a native mobile client, production deployment, load/chaos testing, and migration to the production PostgreSQL schema remain future work.
+1. Set `SHAHID_BIND_HOST=0.0.0.0`.
+2. Set `SHAHID_ALLOWED_ORIGINS` to the exact web origin you will use.
+3. Start Compose.
+4. Use the host machine's LAN IP as the API URL in the Android/iOS app.
+5. For production use HTTPS and a proper certificate/reverse proxy. Plain HTTP is only a development-network experiment and may be restricted by mobile platform security policies.
 
-## Academic material
+The API is intentionally configurable rather than permanently exposed to every network.
 
-The presentation and technical report supplied with the project are preserved under `docs/` for reproducibility and assessment context.
+## Professor workflow
+
+`Sign in → select/create session → start → monitor live attendance → inspect evidence → review risk → end session → export/report`.
+
+The professor UI distinguishes:
+
+- cryptographic check-in
+- BLE observation
+- witness verification
+- evidence freshness
+- risk assessment
+
+It does not display a misleading "guaranteed physical presence" verdict.
+
+## iOS
+
+Open `ios/SHAHID.xcodeproj` with Xcode. The target uses SwiftUI, CoreBluetooth, CryptoKit and Keychain. A physical iPhone is required for real BLE validation.
+
+iOS background execution is platform-controlled. SHAHID therefore does not claim unrestricted continuous BLE collection. The repository must be physically tested before any deployment claim about background continuity.
+
+## Testing
+
+CI validates backend typecheck/tests, PostgreSQL migrations, frontend build, dependency audit, Docker images, CodeQL, Android compilation, and an unsigned iOS simulator build on a macOS runner.
+
+Physical BLE tests remain device/environment dependent and are explicitly reported as not executed unless real phones are available.
+
+## Security truthfulness
+
+SHAHID does not claim to:
+
+- eliminate cheating with certainty;
+- mathematically prove physical presence from BLE;
+- provide hardware attestation unless a hardware-backed implementation is actually configured;
+- provide biometric liveness unless biometric verification is actually implemented.
+
+See `SECURITY.md`, `docs/security/threat-model.md`, `docs/limitations.md`, and `docs/pilot-test.md`.
 
 ## License
 
-MIT — see `LICENSE`.
+MIT.

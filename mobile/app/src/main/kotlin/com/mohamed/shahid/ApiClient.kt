@@ -20,5 +20,5 @@ class ApiClient(private val baseUrl:String){
  fun enrollmentChallenge(token:String,publicKey:String,keyId:String)=request("/devices/enroll/challenge","POST",token,JSONObject().put("publicKey",publicKey).put("keyId",keyId))
  fun completeEnrollment(token:String,challengeId:String,signature:String)=request("/devices/enroll/complete","POST",token,JSONObject().put("challengeId",challengeId).put("signature",signature))
  fun sessionChallenge(token:String,deviceId:String,sessionId:String)=request("/devices/proof-challenge","POST",token,JSONObject().put("deviceId",deviceId).put("sessionId",sessionId))
- fun checkIn(token:String,deviceId:String,challengeId:String,signature:String,timestamp:String)=request("/sessions/$sessionId/check-in","POST",token,JSONObject())
+ fun checkIn(token:String,sessionId:String,deviceId:String,challengeId:String,signature:String,timestamp:String)=request("/sessions/$sessionId/check-in","POST",token,JSONObject().put("deviceId",deviceId).put("challengeId",challengeId).put("signature",signature).put("timestamp",timestamp))
 }

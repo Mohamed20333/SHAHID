@@ -171,6 +171,11 @@ test("witness observer identity must belong to the authenticated user", async ()
     body: JSON.stringify({ observedDeviceId: targetDevice, rssi: -60 }),
   });
   assert.equal(forgedObserver.status, 403);
+  const audit = getDb().prepare("SELECT action, reason_code FROM audit_log WHERE actor_id = ? ORDER BY id DESC LIMIT 1").get(
+    JSON.parse(Buffer.from(observer.accessToken.split(".")[1], "base64url").toString()).sub,
+  ) as { action: string; reason_code: string };
+  assert.equal(audit.action, "DEVICE_SPOOF_ATTEMPT");
+  assert.equal(audit.reason_code, "observer_not_owned");
 
   const legitimate = await fetch(`${BASE}/sessions/${sessionId}/witnesses`, {
     method: "POST",

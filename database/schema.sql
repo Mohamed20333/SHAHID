@@ -37,11 +37,11 @@ CREATE INDEX idx_users_university ON users(university_id);
 CREATE TABLE devices (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-    hardware_attestation_id TEXT NOT NULL,
+    device_enrollment_key_hash TEXT NOT NULL,
     enrolled_at TIMESTAMPTZ NOT NULL DEFAULT now(),
     last_seen_at TIMESTAMPTZ,
     is_primary BOOLEAN NOT NULL DEFAULT TRUE,
-    UNIQUE (hardware_attestation_id)
+    UNIQUE (device_enrollment_key_hash)
 );
 
 CREATE INDEX idx_devices_user ON devices(user_id);
@@ -120,6 +120,24 @@ CREATE TABLE pair_stats (
     CHECK (device_a_id < device_b_id)
 );
 
+CREATE TABLE engagement_scores (
+    student_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    session_id UUID NOT NULL REFERENCES class_sessions(id) ON DELETE CASCADE,
+    score NUMERIC(4,3) NOT NULL CHECK (score BETWEEN 0 AND 1),
+    recorded_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    PRIMARY KEY (student_id, session_id)
+);
+
+CREATE TABLE liveness_events (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    student_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    session_id UUID NOT NULL REFERENCES class_sessions(id) ON DELETE CASCADE,
+    sent_at TIMESTAMPTZ NOT NULL,
+    answered_at TIMESTAMPTZ,
+    passed BOOLEAN NOT NULL DEFAULT FALSE,
+    UNIQUE (student_id, session_id)
+);
+
 CREATE TABLE risk_assessments (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     session_id UUID NOT NULL REFERENCES class_sessions(id) ON DELETE CASCADE,
@@ -131,6 +149,20 @@ CREATE TABLE risk_assessments (
 );
 
 CREATE INDEX idx_risk_student ON risk_assessments(student_id, computed_at);
+
+CREATE TABLE refresh_tokens (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    token_hash TEXT NOT NULL UNIQUE,
+    family_id UUID NOT NULL,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    expires_at TIMESTAMPTZ NOT NULL,
+    revoked_at TIMESTAMPTZ,
+    replaced_by UUID REFERENCES refresh_tokens(id)
+);
+
+CREATE INDEX idx_refresh_user ON refresh_tokens(user_id);
+CREATE INDEX idx_refresh_family ON refresh_tokens(family_id);
 
 CREATE TABLE escalation_events (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),

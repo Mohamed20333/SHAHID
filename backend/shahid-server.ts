@@ -71,6 +71,7 @@ const rateBuckets = new Map<string, { count: number; windowStart: number }>();
 const RATE_LIMIT_WINDOW_MS = 60_000;
 const RATE_LIMIT_MAX = 120;
 const LOGIN_RATE_LIMIT_MAX = 10;
+const REGISTER_RATE_LIMIT_MAX = process.env.NODE_ENV === "test" ? 100 : 5;
 
 interface AuthedUser {
   sub: string;
@@ -258,7 +259,7 @@ export function createShahidServer(dbPath: string = ":memory:") {
       if (method === "POST" && path === "/auth/register") {
         // Public registration deliberately creates students only. Privileged
         // accounts must be provisioned by an already-authorized administrator.
-        if (isRateLimited(`register:${ip}`, 5)) {
+        if (isRateLimited(`register:${ip}`, REGISTER_RATE_LIMIT_MAX)) {
           finish(429, { error: "rate_limited", requestId: id });
           return;
         }

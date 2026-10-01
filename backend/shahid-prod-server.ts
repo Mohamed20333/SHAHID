@@ -1,5 +1,5 @@
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
-import { randomBytes, randomUUID } from "node:crypto";
+import { createHash, randomBytes, randomUUID } from "node:crypto";
 import { Pool } from "pg";
 import { createClient } from "redis";
 import {
@@ -145,6 +145,43 @@ const server=createServer(async(req,res)=>{
       send(res,req,201,{deviceId,keyId:c.key_id,algorithm:"Ed25519"});return;
     }
 
+    const beaconMatch=path.match(/^\/sessions\/([^/]+)\/beacon$/);
+    if(method==="POST"&&beaconMatch){
+      if(!requireRole(u,"student")){send(res,req,403,{error:"forbidden_role",requestId});return;}
+      const sessionId=beaconMatch[1], b=await body(req);
+      const d=(await pool.query<any>("SELECT id FROM devices WHERE id=$1 AND user_id=$2 AND status='active'",[b.deviceId,u.id])).rows[0];
+      const active=(await pool.query("SELECT 1 FROM class_sessions cs JOIN enrollments e ON e.section_id=cs.section_id WHERE cs.id=$1 AND cs.status='active' AND e.student_id=$2",[sessionId,u.id])).rowCount;
+      if(!d||!active){send(res,req,403,{error:"session_or_device_not_authorized",requestId});return;}
+      const ephemeralId=randomBytes(16).toString("base64url");
+      const hash=createHash("sha256").update(ephemeralId).digest("hex");
+      await pool.query("INSERT INTO session_beacons(session_id,device_id,ephemeral_id_hash,expires_at) VALUES($1,$2,$3,now()+interval '10 minutes') ON CONFLICT(session_id,device_id) DO UPDATE SET ephemeral_id_hash=EXCLUDED.ephemeral_id_hash,created_at=now(),expires_at=EXCLUDED.expires_at",[sessionId,d.id,hash]);
+      send(res,req,200,{sessionId,deviceId:d.id,ephemeralId,expiresAt:new Date(Date.now()+600000).toISOString()});return;
+    }
+
+    const witnessChallengeMatch=path.match(/^\/sessions\/([^/]+)\/witness-challenge$/);
+    if(method==="POST"&&witnessChallengeMatch){
+      if(!requireRole(u,"student")){send(res,req,403,{error:"forbidden_role",requestId});return;}
+      const sessionId=witnessChallengeMatch[1], deviceId=String(req.headers["x-device-id"]??"");
+      const d=(await pool.query<any>("SELECT id FROM devices WHERE id=$1 AND user_id=$2 AND status='active'",[deviceId,u.id])).rows[0];
+      const active=(await pool.query("SELECT 1 FROM class_sessions WHERE id=$1 AND status='active'",[sessionId])).rowCount;
+      if(!d||!active){send(res,req,403,{error:"observer_device_not_authorized",requestId});return;}
+      const challengeId=randomUUID(),nonce=randomBytes(32).toString("base64url");
+      await pool.query("INSERT INTO witness_challenges(id,session_id,observer_device_id,nonce,expires_at) VALUES($1,$2,$3,$4,now()+interval '60 seconds')",[challengeId,sessionId,d.id,nonce]);
+      send(res,req,200,{challengeId,nonce,expiresAt:new Date(Date.now()+60000).toISOString()});return;
+    }
+
+    const heartbeatMatch=path.match(/^\/sessions\/([^/]+)\/heartbeat$/);
+    if(method==="POST"&&heartbeatMatch){
+      if(!requireRole(u,"student")){send(res,req,403,{error:"forbidden_role",requestId});return;}
+      const sessionId=heartbeatMatch[1],b=await body(req),d=(await pool.query<any>("SELECT * FROM devices WHERE id=$1 AND user_id=$2 AND status='active'",[b.deviceId,u.id])).rows[0];
+      if(!d||!isFreshIsoTimestamp(b.timestamp)||!Number.isInteger(b.sequence)||b.sequence<0){send(res,req,400,{error:"invalid_heartbeat",requestId});return;}
+      const active=(await pool.query("SELECT 1 FROM class_sessions WHERE id=$1 AND status='active'",[sessionId])).rowCount;if(!active){send(res,req,404,{error:"session_not_found",requestId});return;}
+      const msg=canonicalProof({sessionId,deviceId:d.id,sequence:b.sequence,timestamp:b.timestamp});
+      if(typeof b.signature!=="string"||!verifyDeviceSignature(d.public_key,msg,b.signature)){await audit(u.id,"HEARTBEAT_SIGNATURE_INVALID","class_session",sessionId,"invalid_heartbeat_signature",{requestId});send(res,req,401,{error:"invalid_heartbeat",requestId});return;}
+      try{await pool.query("INSERT INTO evidence_heartbeats(session_id,device_id,observed_at,sequence,signature) VALUES($1,$2,$3,$4,$5)",[sessionId,d.id,new Date(b.timestamp),b.sequence,b.signature]);}catch{send(res,req,409,{error:"duplicate_heartbeat",requestId});return;}
+      send(res,req,201,{recorded:true});return;
+    }
+
     const challengeMatch=path==="/devices/proof-challenge";
     if(method==="POST"&&challengeMatch){
       const b=await body(req);const q=await pool.query<any>("SELECT * FROM devices WHERE id=$1 AND user_id=$2 AND status='active'",[b.deviceId,u.id]);const d=q.rows[0];
@@ -170,15 +207,18 @@ const server=createServer(async(req,res)=>{
 
     const witnessMatch=path.match(/^\/sessions\/([^/]+)\/witnesses$/);
     if(method==="POST"&&witnessMatch){
-      const sessionId=witnessMatch[1],b=await body(req);const d=(await pool.query<any>("SELECT * FROM devices WHERE id=$1 AND user_id=$2 AND status='active'",[req.headers["x-device-id"],u.id])).rows[0];
-      const observed=(await pool.query<any>("SELECT * FROM devices WHERE id=$1 AND status='active'",[b.observedDeviceId])).rows[0];
-      if(!d||!observed||observed.user_id===u.id){await audit(u.id,"WITNESS_REJECTED","device",String(b.observedDeviceId??""),"observer_or_subject_invalid",{requestId});send(res,req,403,{error:"invalid_witness",requestId});return;}
-      const session=(await pool.query("SELECT id FROM class_sessions WHERE id=$1 AND status='active'",[sessionId])).rowCount;if(!session){send(res,req,404,{error:"session_not_found",requestId});return;}
-      if(typeof b.signature!=="string"||typeof b.nonce!=="string"||!isFreshIsoTimestamp(b.timestamp)||typeof b.rssi!=="number"||b.rssi<-127||b.rssi>0){send(res,req,400,{error:"signed_witness_required",requestId});return;}
-      const msg=canonicalProof({sessionId,observerDeviceId:d.id,observedDeviceId:observed.id,rssi:b.rssi,timestamp:b.timestamp,nonce:b.nonce,observationType:b.observationType??"ble_proximity",protocolVersion:b.protocolVersion??"1"});
+      const sessionId=witnessMatch[1],b=await body(req),deviceId=String(req.headers["x-device-id"]??"");
+      const d=(await pool.query<any>("SELECT * FROM devices WHERE id=$1 AND user_id=$2 AND status='active'",[deviceId,u.id])).rows[0];
+      const challenge=(await pool.query<any>("SELECT * FROM witness_challenges WHERE id=$1 AND session_id=$2 AND observer_device_id=$3",[b.challengeId,sessionId,deviceId])).rows[0];
+      const hash=typeof b.ephemeralId==="string"?createHash("sha256").update(b.ephemeralId).digest("hex"):"";
+      const observed=(await pool.query<any>("SELECT d.* FROM session_beacons sb JOIN devices d ON d.id=sb.device_id WHERE sb.session_id=$1 AND sb.ephemeral_id_hash=$2 AND sb.expires_at>now() AND d.status='active'",[sessionId,hash])).rows[0];
+      if(!d||!challenge||challenge.consumed_at||new Date(challenge.expires_at)<=new Date()||!observed||observed.user_id===u.id){await audit(u.id,"WITNESS_REJECTED","class_session",sessionId,"observer_challenge_or_beacon_invalid",{requestId});send(res,req,403,{error:"invalid_witness",requestId});return;}
+      if(typeof b.signature!=="string"||!isFreshIsoTimestamp(b.timestamp)||typeof b.rssi!=="number"||b.rssi<-127||b.rssi>0){send(res,req,400,{error:"signed_witness_required",requestId});return;}
+      const msg=canonicalProof({sessionId,observerDeviceId:d.id,observedDeviceId:observed.id,rssi:b.rssi,timestamp:b.timestamp,nonce:challenge.nonce,observationType:"ble_proximity",protocolVersion:"1"});
       if(!verifyDeviceSignature(d.public_key,msg,b.signature)){await audit(u.id,"WITNESS_SIGNATURE_INVALID","class_session",sessionId,"invalid_observation_signature",{requestId});send(res,req,401,{error:"invalid_witness_signature",requestId});return;}
-      try{await pool.query("INSERT INTO witness_observations(session_id,observer_device_id,observed_device_id,epoch_index,rssi,observed_at,signature,nonce,observation_type,protocol_version,ephemeral_id) VALUES($1,$2,$3,0,$4,$5,$6,$7,$8,$9,$10)",[sessionId,d.id,observed.id,b.rssi,new Date(b.timestamp),b.signature,b.nonce,b.observationType??"ble_proximity",b.protocolVersion??"1",b.ephemeralId??null]);}catch{send(res,req,409,{error:"duplicate_witness_observation",requestId});return;}
-      send(res,req,201,{recorded:true,signed:true});return;
+      const consumed=await pool.query("UPDATE witness_challenges SET consumed_at=now() WHERE id=$1 AND consumed_at IS NULL",[challenge.id]);if(!consumed.rowCount){send(res,req,409,{error:"witness_challenge_replayed",requestId});return;}
+      try{await pool.query("INSERT INTO witness_observations(session_id,observer_device_id,observed_device_id,epoch_index,rssi,observed_at,signature,nonce,observation_type,protocol_version,ephemeral_id) VALUES($1,$2,$3,0,$4,$5,$6,$7,'ble_proximity','1',$8)",[sessionId,d.id,observed.id,b.rssi,new Date(b.timestamp),b.signature,challenge.nonce,b.ephemeralId]);}catch{send(res,req,409,{error:"duplicate_witness_observation",requestId});return;}
+      send(res,req,201,{recorded:true,signed:true,observedDeviceId:observed.id});return;
     }
 
     const attMatch=path.match(/^\/sessions\/([^/]+)\/attendance\/([^/]+)$/);

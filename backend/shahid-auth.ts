@@ -49,7 +49,7 @@ export function verifyPassword(plain: string, stored: string): boolean {
     if (!saltHex || !hashHex || saltHex.length !== 32 || hashHex.length !== 128) return false;
     const salt = Buffer.from(saltHex, "hex");
     const expected = Buffer.from(hashHex, "hex");
-    const actual = scryptSync(plain, salt, SCRYPT_KEYLEN);
+    const actual = scryptSync(plain, salt, SCRYPT_KEYLEN, SCRYPT_OPTIONS);
     return actual.length === expected.length && timingSafeEqual(actual, expected);
   } catch {
     return false;

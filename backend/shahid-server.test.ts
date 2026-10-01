@@ -206,11 +206,12 @@ test("risk calculation ignores client-supplied evidence and reads server-owned e
   await registerStudent("risk-student@test.com");
   const student = await login("risk-student@test.com");
   const device = await enroll(student.accessToken, "risk-device");
+  const secondDevice = await enroll(student.accessToken, "risk-device-2");
   const sessionId = await createSession(prof.accessToken);
 
   const db = getDb();
   db.prepare(`INSERT INTO pair_stats (device_a_id, device_b_id, sessions_observed, co_occurrence_rate, variance_score)
-              VALUES (?, ?, ?, ?, ?)`).run(device, "not-a-real-device", 22, 0.97, 0.05);
+              VALUES (?, ?, ?, ?, ?)`).run(device, secondDevice, 22, 0.97, 0.05);
 
   // Deliberately send forged risk evidence. The API must ignore it.
   const res = await fetch(`${BASE}/sessions/${sessionId}/risk/${JSON.parse(Buffer.from(student.accessToken.split(".")[1], "base64url").toString()).sub}`, {

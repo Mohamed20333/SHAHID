@@ -9,7 +9,6 @@ struct SHAHIDApp: App {
     }
 }
 
-@MainActor
 final class AppModel: ObservableObject {
     @Published var apiBase = UserDefaults.standard.string(forKey: "apiBase") ?? "http://localhost:8080"
     @Published var email = ""

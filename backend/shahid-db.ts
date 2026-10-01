@@ -122,7 +122,91 @@ function migrate(database: DatabaseSync): void {
     );
     CREATE INDEX IF NOT EXISTS idx_audit_actor ON audit_log(actor_id, occurred_at);
     CREATE INDEX IF NOT EXISTS idx_audit_target ON audit_log(target_type, target_id);
+
+    CREATE TABLE IF NOT EXISTS device_challenges (
+      id TEXT PRIMARY KEY,
+      user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      public_key TEXT NOT NULL,
+      key_id TEXT NOT NULL,
+      purpose TEXT NOT NULL,
+      session_id TEXT REFERENCES class_sessions(id) ON DELETE CASCADE,
+      nonce TEXT NOT NULL UNIQUE,
+      created_at TEXT NOT NULL,
+      expires_at TEXT NOT NULL,
+      consumed_at TEXT
+    );
+    CREATE INDEX IF NOT EXISTS idx_device_challenges_user ON device_challenges(user_id, expires_at);
+
+    CREATE TABLE IF NOT EXISTS device_crypto (
+      device_id TEXT PRIMARY KEY REFERENCES devices(id) ON DELETE CASCADE,
+      public_key TEXT NOT NULL,
+      key_id TEXT NOT NULL UNIQUE,
+      algorithm TEXT NOT NULL DEFAULT 'Ed25519',
+      status TEXT NOT NULL DEFAULT 'active' CHECK(status IN ('active','revoked')),
+      updated_at TEXT NOT NULL
+    );
   `);
+}
+
+export function createDeviceChallenge(database: DatabaseSync, params: {
+  userId: string; publicKey: string; keyId: string; purpose: string; sessionId?: string | null;
+}): { id: string; nonce: string; expiresAt: string } {
+  const id = randomUUID();
+  const nonce = randomUUID().replaceAll("-", "") + randomUUID().replaceAll("-", "");
+  const createdAt = new Date();
+  const expiresAt = new Date(createdAt.getTime() + 2 * 60 * 1000);
+  database.prepare(`
+    INSERT INTO device_challenges
+      (id,user_id,public_key,key_id,purpose,session_id,nonce,created_at,expires_at)
+    VALUES (?,?,?,?,?,?,?,?,?)
+  `).run(id, params.userId, params.publicKey, params.keyId, params.purpose, params.sessionId ?? null,
+    nonce, createdAt.toISOString(), expiresAt.toISOString());
+  return { id, nonce, expiresAt: expiresAt.toISOString() };
+}
+
+export function getDeviceChallenge(database: DatabaseSync, id: string) {
+  return database.prepare("SELECT * FROM device_challenges WHERE id = ?").get(id) as any;
+}
+
+export function consumeDeviceChallenge(database: DatabaseSync, id: string): boolean {
+  const result = database.prepare("UPDATE device_challenges SET consumed_at = ? WHERE id = ? AND consumed_at IS NULL")
+    .run(new Date().toISOString(), id);
+  return Number(result.changes) === 1;
+}
+
+export function enrollCryptographicDevice(database: DatabaseSync, params: {
+  userId: string; publicKey: string; keyId: string;
+}): string {
+  const existing = database.prepare("SELECT device_id FROM device_crypto WHERE key_id = ?").get(params.keyId) as {device_id:string}|undefined;
+  if (existing) {
+    const owner = getDevice(database, existing.device_id);
+    if (!owner || owner.user_id !== params.userId) throw new Error("device_key_already_owned");
+    return existing.device_id;
+  }
+  const deviceId = randomUUID();
+  const now = new Date().toISOString();
+  database.prepare(`
+    INSERT INTO devices (id,user_id,device_enrollment_key_hash,enrolled_at)
+    VALUES (?,?,?,?)
+  `).run(deviceId, params.userId, randomUUID(), now);
+  database.prepare(`
+    INSERT INTO device_crypto (device_id,public_key,key_id,algorithm,status,updated_at)
+    VALUES (?,?,?,?,?,?)
+  `).run(deviceId, params.publicKey, params.keyId, "Ed25519", "active", now);
+  return deviceId;
+}
+
+export function getCryptoDevice(database: DatabaseSync, deviceId: string) {
+  return database.prepare(`
+    SELECT d.id,d.user_id,d.enrolled_at,c.public_key,c.key_id,c.algorithm,c.status
+    FROM devices d JOIN device_crypto c ON c.device_id=d.id
+    WHERE d.id=?
+  `).get(deviceId) as any;
+}
+
+export function revokeCryptoDevice(database: DatabaseSync, deviceId: string): void {
+  database.prepare("UPDATE device_crypto SET status='revoked', updated_at=? WHERE device_id=?")
+    .run(new Date().toISOString(), deviceId);
 }
 
 export interface UserRow {

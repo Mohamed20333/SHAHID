@@ -12,11 +12,19 @@
     "demo": "tsx backend/shahid-demo.ts",
     "start": "tsx backend/shahid-server.ts",
     "typecheck": "tsc --noEmit",
-    "check": "npm run typecheck && npm test"
+    "check": "npm run typecheck && npm test",
+    "lint": "tsc --noEmit",
+    "start:prod": "tsx backend/shahid-prod-server.ts",
+    "db:migrate": "tsx backend/shahid-migrate.ts"
   },
   "devDependencies": {
     "tsx": "^4.19.2",
     "typescript": "^5.7.2",
-    "@types/node": "^22.10.2"
+    "@types/node": "^22.10.2",
+    "@types/pg": "^8.15.5"
+  },
+  "dependencies": {
+    "pg": "^8.16.3",
+    "zod": "^3.25.76"
   }
 }

@@ -18,6 +18,7 @@ import {
 } from "node:crypto";
 
 const SCRYPT_KEYLEN = 64;
+const SCRYPT_OPTIONS = { N: 2 ** 17, r: 8, p: 1, maxmem: 256 * 1024 * 1024 };
 const JWT_ISSUER = "shahid";
 const JWT_AUDIENCE = "shahid-api";
 
@@ -38,7 +39,7 @@ export function hashPassword(plain: string): string {
     throw new Error("password_policy_violation");
   }
   const salt = randomBytes(16);
-  const derived = scryptSync(plain, salt, SCRYPT_KEYLEN);
+  const derived = scryptSync(plain, salt, SCRYPT_KEYLEN, SCRYPT_OPTIONS);
   return `${salt.toString("hex")}:${derived.toString("hex")}`;
 }
 

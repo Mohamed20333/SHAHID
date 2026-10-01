@@ -196,6 +196,50 @@ const server=createServer(async(req,res)=>{
       const id=randomUUID();await pool.query("INSERT INTO class_sessions(id,section_id,status) VALUES($1,$2,'active')",[id,sectionId]);send(res,req,201,{id,status:"active"});return;
     }
 
+    if(method==="POST"&&path==="/courses"){
+      if(!requireRole(u,"professor","dept_admin","university_admin")){send(res,req,403,{error:"forbidden_role",requestId});return;}
+      const b=await body(req);if(typeof b.code!=="string"||typeof b.title!=="string"){send(res,req,400,{error:"invalid_course",requestId});return;}
+      const id=randomUUID();await pool.query("INSERT INTO courses(id,university_id,code,title) VALUES($1,(SELECT university_id FROM users WHERE id=$2),$3,$4)",[id,u.id,b.code.trim(),b.title.trim()]);
+      send(res,req,201,{id,code:b.code.trim(),title:b.title.trim()});return;
+    }
+
+    if(method==="POST"&&path==="/sections"){
+      if(!requireRole(u,"professor","dept_admin","university_admin")){send(res,req,403,{error:"forbidden_role",requestId});return;}
+      const b=await body(req);if(typeof b.courseId!=="string"||typeof b.term!=="string"){send(res,req,400,{error:"invalid_section",requestId});return;}
+      const id=randomUUID();const q=await pool.query("INSERT INTO sections(id,course_id,instructor_id,term) SELECT $1,id,$2,$3 FROM courses WHERE id=$4 AND university_id=(SELECT university_id FROM users WHERE id=$2) RETURNING id",[id,u.id,b.term,b.courseId]);
+      if(!q.rowCount){send(res,req,404,{error:"course_not_found",requestId});return;}send(res,req,201,{id,courseId:b.courseId,term:b.term});return;
+    }
+
+    if(method==="POST"&&/^\/sections\/[^/]+\/enroll$/.test(path)){
+      if(!requireRole(u,"student")){send(res,req,403,{error:"forbidden_role",requestId});return;}
+      const sectionId=path.split("/")[2];const q=await pool.query("INSERT INTO enrollments(id,section_id,student_id) SELECT $1,id,$2 FROM sections WHERE id=$3 AND EXISTS(SELECT 1 FROM courses c WHERE c.id=sections.course_id AND c.university_id=(SELECT university_id FROM users WHERE id=$2)) ON CONFLICT(section_id,student_id) DO NOTHING RETURNING id",[randomUUID(),u.id,sectionId]);
+      if(!q.rowCount){send(res,req,404,{error:"section_not_found",requestId});return;}send(res,req,201,{enrolled:true});return;
+    }
+
+    if(method==="GET"&&path==="/professor/sessions"){
+      if(!requireRole(u,"professor","dept_admin","university_admin")){send(res,req,403,{error:"forbidden_role",requestId});return;}
+      const q=await pool.query("SELECT cs.id,cs.status,cs.started_at,cs.ended_at,c.code,c.title,se.term FROM class_sessions cs JOIN sections se ON se.id=cs.section_id JOIN courses c ON c.id=se.course_id WHERE se.instructor_id=$1 ORDER BY cs.started_at DESC LIMIT 100",[u.id]);send(res,req,200,q.rows);return;
+    }
+
+    if(method==="GET"&&/^\/sessions\/[^/]+\/overview$/.test(path)){
+      const sessionId=path.split("/")[2];const s=(await pool.query<any>("SELECT cs.id,cs.status,cs.started_at,cs.ended_at,se.instructor_id,c.code,c.title,se.term FROM class_sessions cs JOIN sections se ON se.id=cs.section_id JOIN courses c ON c.id=se.course_id WHERE cs.id=$1",[sessionId])).rows[0];
+      if(!s){send(res,req,404,{error:"session_not_found",requestId});return;}
+      if(s.instructor_id!==u.id){send(res,req,403,{error:"forbidden",requestId});return;}
+      const a=await pool.query("SELECT ar.student_id,u.full_name,u.email,ar.outcome,ar.proof_verified,ar.checked_in_at,COUNT(DISTINCT w.observer_device_id)::int AS witness_count FROM attendance_records ar JOIN users u ON u.id=ar.student_id LEFT JOIN witness_observations w ON w.session_id=ar.session_id AND w.observed_device_id=ar.device_id WHERE ar.session_id=$1 GROUP BY ar.student_id,u.full_name,u.email,ar.outcome,ar.proof_verified,ar.checked_in_at ORDER BY u.full_name",[sessionId]);
+      send(res,req,200,{session:s,students:a.rows});return;
+    }
+
+    if(method==="GET"&&path==="/student/sessions"){
+      if(!requireRole(u,"student")){send(res,req,403,{error:"forbidden_role",requestId});return;}
+      const q=await pool.query("SELECT cs.id,cs.status,cs.started_at,c.code,c.title,se.term,EXISTS(SELECT 1 FROM attendance_records ar WHERE ar.session_id=cs.id AND ar.student_id=$1) AS checked_in FROM class_sessions cs JOIN sections se ON se.id=cs.section_id JOIN courses c ON c.id=se.course_id JOIN enrollments e ON e.section_id=se.id WHERE e.student_id=$1 AND cs.status='active' ORDER BY cs.started_at DESC",[u.id]);send(res,req,200,q.rows);return;
+    }
+
+    if(method==="POST"&&/^\/admin\/devices\/[^/]+\/revoke$/.test(path)){
+      if(!requireRole(u,"dept_admin","university_admin","platform_admin")){send(res,req,403,{error:"forbidden_role",requestId});return;}
+      const deviceId=path.split("/")[3];const q=await pool.query("UPDATE devices SET status='revoked' WHERE id=$1 AND user_id IN (SELECT id FROM users WHERE university_id=(SELECT university_id FROM users WHERE id=$2)) RETURNING id",[deviceId,u.id]);
+      if(!q.rowCount){send(res,req,404,{error:"device_not_found",requestId});return;}await audit(u.id,"DEVICE_REVOKED","devices",deviceId,"administrator_action",{requestId});send(res,req,200,{revoked:true});return;
+    }
+
     if(method==="GET"&&path==="/me"){const q=await pool.query("SELECT id,role,full_name,email,university_id FROM users WHERE id=$1",[u.id]);send(res,req,200,q.rows[0]);return;}
     send(res,req,404,{error:"not_found",requestId});
   }catch(e){
